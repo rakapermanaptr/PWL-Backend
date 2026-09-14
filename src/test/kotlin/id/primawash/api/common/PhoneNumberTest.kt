@@ -28,4 +28,14 @@ class PhoneNumberTest {
     fun `should mask the middle digits for logs`() {
         PhoneNumber.mask("0812-3390-4471") shouldBe "0812-****-4471"
     }
+
+    @Test
+    fun `should validate exactly like the client and explain why a number is refused`() {
+        PhoneNumber.validate("+62 812-3390-4471").getOrNull() shouldBe "081233904471"
+        PhoneNumber.validate("0812 3390 4471").getOrNull() shouldBe "081233904471"
+        PhoneNumber.validate("0812-339").exceptionOrNull()?.message shouldBe "Nomor HP kurang dari 10 digit"
+        PhoneNumber.validate("0812-3390-44x1").exceptionOrNull()?.message shouldBe "Format nomor tidak dikenali"
+        PhoneNumber.validate("021-8290-1147").exceptionOrNull()?.message shouldBe "Format nomor tidak dikenali"
+        PhoneNumber.validate("0812-3390-4471-2233").exceptionOrNull()?.message shouldBe "Format nomor tidak dikenali"
+    }
 }

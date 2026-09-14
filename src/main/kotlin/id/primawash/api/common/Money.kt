@@ -34,4 +34,7 @@ object Money {
 
     /** "Rp75.000" — the exact shape used inside Indonesian error messages and WhatsApp templates. */
     fun formatRupiah(amount: Long): String = "Rp" + rupiahFormat.format(amount)
+
+    /** "1.500" — points and counts inside Indonesian sentences (client `Long.grouped()`). */
+    fun grouped(amount: Long): String = rupiahFormat.format(amount)
 }

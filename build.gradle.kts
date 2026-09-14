@@ -52,6 +52,11 @@ dependencies {
     add(integrationTest.implementationConfigurationName, sourceSets.main.get().output)
     add(integrationTest.implementationConfigurationName, libs.bundles.test.containers)
     add(contractTest.implementationConfigurationName, sourceSets.main.get().output)
+    // Contract tests boot the API against the same Testcontainers Postgres as the integration suite
+    // and reuse its fixtures, then validate every response body against openapi.yaml.
+    add(contractTest.implementationConfigurationName, integrationTest.output)
+    add(contractTest.implementationConfigurationName, libs.bundles.test.containers)
+    add(contractTest.implementationConfigurationName, libs.bundles.test.contract)
 }
 
 application {

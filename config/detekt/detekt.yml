@@ -5,6 +5,10 @@ build:
 style:
   ReturnCount:
     max: 4
+  ThrowsCount:
+    # Services check rules in the PRD's documented order and throw the first one that fails — one
+    # throw per rule reads better than funnelling every rule through a single exit.
+    max: 6
   MagicNumber:
     # Business constants live in named objects; seed data (PRD Lampiran D) and test data are
     # literal by nature — a price list of named constants would be less readable, not more.

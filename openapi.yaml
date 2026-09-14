@@ -2,24 +2,26 @@ openapi: 3.1.0
 
 info:
   title: PWL Cashier — Backend REST API Prima Wash
-  version: 1.0.0-draft
+  version: 1.0.0-m1
   summary: REST API pusat untuk aplikasi kasir Android Prima Wash (Kasir Prima Laundry).
   description: |
     Kontrak resmi ada di `docs/PRD-Backend-REST-API.md`. Bila dokumen ini dan PRD berbeda,
     **PRD yang menang** — perbaiki file ini di PR yang sama.
 
-    **Status M0.** Yang sudah terspesifikasi lengkap di sini baru endpoint health plus komponen
-    bersama (amplop error, header wajib, paginasi, keamanan) yang dipakai ulang semua endpoint
-    berikutnya. Permukaan API per milestone didaftar di `x-planned-endpoints`; tiap endpoint
-    dipindahkan ke `paths` pada PR yang mengimplementasikannya — sebuah PR yang mengubah permukaan
-    API wajib memperbarui berkas ini.
+    **Status M1.** Terspesifikasi lengkap: health, layar login & sesi, perangkat, cabang, staff, price
+    list, loyalty, reward, dan customer. Permukaan milestone berikutnya didaftar di
+    `x-planned-endpoints`; tiap endpoint dipindahkan ke `paths` pada PR yang mengimplementasikannya.
+    Setiap respons di `paths` divalidasi terhadap skema di berkas ini oleh `./gradlew contractTest`.
+
+    Kode & pesan error M1 yang belum ada di PRD Lampiran B/C dicatat di `docs/prd-gaps-m1.md`.
 
     Konvensi (PRD §6):
-      * JSON UTF-8, field camelCase; kolom database snake_case.
+      * JSON UTF-8, field camelCase; kolom database snake_case. Nilai kosong dikirim sebagai `null`.
       * Waktu ISO-8601 UTC dengan milidetik (`2026-08-29T04:24:00.000Z`).
       * Tanggal bisnis `YYYY-MM-DD` zona Asia/Jakarta, diturunkan dari `capturedAt`.
       * Uang integer rupiah (`45000`); kuantitas desimal satu angka di belakang koma (`4.5`).
       * `error.message` adalah kalimat Bahasa Indonesia yang ditampilkan ke kasir apa adanya.
+      * Semua endpoint bisnis ada di bawah `/api/v1` dan dibatasi 120 request/menit per perangkat.
   contact:
     name: Tim Backend Prima Wash
   license:
@@ -28,7 +30,7 @@ info:
 servers:
   - url: http://localhost:8080
     description: Lokal (docker compose)
-  - url: https://staging.primawash.id
+  - url: https://pwl-cashier-staging-rvz75.ondigitalocean.app
     description: Staging — dipakai untuk shadow mode
   - url: https://api.primawash.id
     description: Produksi
@@ -37,11 +39,11 @@ tags:
   - name: health
     description: Liveness & readiness untuk load balancer dan monitoring.
   - name: auth
-    description: Aktivasi perangkat, login PIN, sesi (M1).
+    description: Layar login (pilih cabang → PIN), sesi, tablet (PRD §8.1).
   - name: master-data
-    description: Cabang, staff, price list, loyalty, reward (M1).
+    description: Cabang, staff, price list, loyalty, reward (PRD §8.2–§8.4).
   - name: customer
-    description: Customer, poin, impor CSV (M1 & M3).
+    description: Customer & poin (PRD §8.5).
   - name: order
     description: Order, status, sinkronisasi offline (M2).
   - name: shift
@@ -52,7 +54,7 @@ tags:
     description: Outbox, kegagalan, webhook Meta (M5 — fase akhir).
 
 security:
-  - bearerAuth: []
+  - staffToken: []
 
 paths:
   /health:
@@ -102,33 +104,994 @@ paths:
                 status: NOT_READY
                 database: DOWN
 
+  # ---------------------------------------------------------------------------------------------
+  # Layar login & sesi — PRD §8.1 (tanpa aktivasi perangkat, lihat docs/prd-gaps-m1.md)
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/devices:
+    get:
+      tags: [auth]
+      summary: Daftar tablet (owner)
+      description: |
+        Tablet yang pernah berhasil login, terbaru dulu, termasuk yang sudah diblokir. Tablet tercatat
+        otomatis dari `X-Device-Id` pada login pertamanya — tidak ada langkah aktivasi. Instalasi yang
+        hanya mencoba PIN tanpa pernah berhasil tidak ditampilkan.
+      operationId: listDevices
+      responses:
+        "200":
+          description: Daftar tablet.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/devices/{id}:
+    delete:
+      tags: [auth]
+      summary: Blokir tablet (owner)
+      description: |
+        Untuk tablet yang hilang: tablet tidak bisa login PIN maupun refresh lagi, dan semua sesinya
+        dicabut dalam transaksi yang sama. Memblokir tablet yang sudah diblokir → `changed: false` tanpa
+        audit. Audit `DEVICE_REVOKED` "Blokir perangkat {nama}". `{id}` = `X-Device-Id` tablet tsb.
+      operationId: revokeDevice
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Perangkat dicabut.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceChangeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/login-options:
+    get:
+      tags: [auth]
+      summary: Pilihan layar login
+      description: |
+        **Publik** — layar pertama aplikasi, termasuk setelah fresh install. Cabang, nama pendek kasir
+        aktif, dan status shift terakhir per cabang. Bila `X-Device-Id` dikirim dan tablet itu pernah
+        login, `lastBranchId` berisi cabang terakhirnya untuk dipilih otomatis. **Tidak pernah** mengirim
+        data PIN.
+      operationId: getLoginOptions
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdOptional"
+      responses:
+        "200":
+          description: Pilihan login.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginOptionsResponse"
+              example:
+                lastBranchId: 7f1c2d3e-0000-4000-8000-000000000001
+                branches:
+                  - id: 7f1c2d3e-0000-4000-8000-000000000001
+                    code: TBT
+                    name: Tebet
+                    address: Jl. Tebet Raya No. 42, Jakarta Selatan
+                    hours: 07.00 – 21.00
+                    active: true
+                    cashierNames: [Siti N., Bagas A.]
+                    shift:
+                      open: true
+                      openedByName: Siti Nurhaliza
+
+  /api/v1/auth/pin-login:
+    post:
+      tags: [auth]
+      summary: Login PIN di cabang yang dipilih
+      description: |
+        **Publik** — cukup pilih cabang dan ketik PIN, tanpa aktivasi perangkat. Header `X-Device-Id`
+        wajib: ID instalasi yang dibuat aplikasi sendiri saat pertama dibuka (UUID, disimpan permanen,
+        tidak pernah ditampilkan ke pengguna). Tablet tercatat di server pada percobaan pertamanya.
+        Maksimal 20 percobaan per alamat jaringan per 5 menit → `429 RATE_LIMITED`.
+
+        Urutan pengecekan (`LoginWithPinUseCase`), kesalahan pertama yang dikembalikan:
+
+        | # | Kondisi | HTTP / code | `details.clearPin` |
+        |---|---|---|---|
+        | 0 | `X-Device-Id` tidak ada / bukan UUID | 400 `VALIDATION_ERROR` | — |
+        | 1 | Cabang tidak ada / id tidak valid | 422 `BRANCH_REQUIRED` | false |
+        | 2 | Cabang nonaktif | 422 `BRANCH_INACTIVE` | false |
+        | 3 | PIN bukan 4–6 digit angka | 422 `PIN_FORMAT` | false |
+        | 4a | Tablet diblokir owner | 401 `DEVICE_UNAUTHORIZED` | — |
+        | 4b | Tablet terkunci (5 PIN salah dalam 5 menit) | 423 `PIN_LOCKED` + `Retry-After` | true |
+        | 5 | PIN tidak cocok | 422 `PIN_UNKNOWN` | true |
+        | 6 | Akun terkunci (5 salah berturut-turut di verify-pin/switch-staff) | 423 `PIN_LOCKED` | true |
+        | 7 | Akun nonaktif | 422 `STAFF_INACTIVE` | true |
+        | 8 | Kasir di cabang lain | 422 `STAFF_WRONG_BRANCH` | true |
+
+        Penolakan #5–#8 diaudit `LOGIN_FAILED` (tanpa PIN) dan dihitung ke batas perangkat; percobaan
+        yang memicu kunci tetap mendapat error-nya sendiri, percobaan berikutnya `423`.
+
+        Sukses: `last_login_at`, sesi baru (sesi lain di perangkat ini berakhir), `last_branch_id`
+        perangkat, audit `LOGIN` "Login PIN sebagai kasir Tebet di perangkat Cabang Tebet" /
+        "… sebagai owner/admin …", dan — pada login pertama sebuah tablet — `DEVICE_ACTIVATED`. Header
+        `Cache-Control: no-store`.
+      operationId: pinLogin
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdRequired"
+        - $ref: "#/components/parameters/AppVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PinLoginRequest"
+            example:
+              branchId: 7f1c2d3e-0000-4000-8000-000000000001
+              pin: "1234"
+      responses:
+        "200":
+          description: Login berhasil.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/DeviceBlocked"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+        "423":
+          $ref: "#/components/responses/PinLocked"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Perpanjang access token
+      description: |
+        Refresh token dirotasi setiap dipakai — token lama langsung tidak berlaku. Sesi tetap berakhir
+        18 jam sejak login (rotasi tidak memperpanjangnya), sehingga `refreshTokenExpiresIn` adalah
+        sisa waktunya. Publik (tanpa access token), tetapi `X-Device-Id` wajib dan harus tablet yang
+        sama dengan saat login. Token tidak dikenal, dicabut, kedaluwarsa, atau milik tablet lain → 401
+        `UNAUTHENTICATED`; tablet diblokir → 401 `DEVICE_UNAUTHORIZED`.
+      operationId: refreshSession
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Token baru.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/v1/auth/verify-pin:
+    post:
+      tags: [auth]
+      summary: Verifikasi PIN staff tertentu
+      description: |
+        Dipakai layar Kas sebelum buka shift (`VerifyStaffPinUseCase`). Urutan: staff dipilih
+        (`STAFF_REQUIRED` "Pilih staff dulu.") → akun aktif (`STAFF_INACTIVE`) → boleh bekerja di
+        cabang token (`STAFF_WRONG_BRANCH`) → PIN 4–6 digit (`PIN_FORMAT`) → perangkat/akun tidak
+        terkunci (`423 PIN_LOCKED`) → PIN cocok (`PIN_WRONG` "PIN salah untuk {nama}. Coba lagi.").
+        PIN salah dihitung ke batas perangkat dan ke kunci akun (5 berturut-turut → 15 menit, audit
+        `PIN_LOCKED`). `staffProof` sekali pakai, berlaku 5 menit; server hanya menyimpan hash-nya.
+      operationId: verifyPin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffPinRequest"
+      responses:
+        "200":
+          description: PIN benar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerifyPinResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+        "423":
+          $ref: "#/components/responses/PinLocked"
+
+  /api/v1/auth/switch-staff:
+    post:
+      tags: [auth]
+      summary: Serahkan perangkat ke staff lain
+      description: |
+        Validasi sama dengan verify-pin, lalu sesi pemanggil berakhir dan sesi baru terbit untuk staff
+        tsb di cabang yang sama. Audit `STAFF_SWITCHED` "Login PIN sebagai {kasir Tebet | owner/admin}".
+        Bila staff baru kasir, klien keluar dari layar owner.
+      operationId: switchStaff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StaffPinRequest"
+      responses:
+        "200":
+          description: Sesi baru untuk staff yang masuk.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+        "423":
+          $ref: "#/components/responses/PinLocked"
+
+  /api/v1/auth/switch-branch:
+    post:
+      tags: [auth]
+      summary: Pindah konteks cabang perangkat (owner)
+      description: |
+        Urutan: pemanggil owner (`403 OWNER_ONLY` "Perangkat kasir terikat ke Cabang {nama}. Hanya
+        owner/admin yang bisa memindahkan perangkat ke cabang lain.") → cabang ada (404) → cabang aktif
+        (`BRANCH_INACTIVE`). Cabang berbeda → token baru, sesi lama berakhir, audit
+        `DEVICE_BRANCH_SWITCHED`. Cabang sama → `changed: false`, token `null`.
+      operationId: switchBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SwitchBranchRequest"
+      responses:
+        "200":
+          description: Hasil pindah cabang.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchBranchResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: Logout
+      description: Mencabut sesi, audit `LOGOUT` "Logout dari perangkat Cabang {nama}", dan mengembalikan cabang untuk preselect.
+      operationId: logout
+      responses:
+        "200":
+          description: Sesi berakhir.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogoutResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/v1/me:
+    get:
+      tags: [auth]
+      summary: Konteks sesi
+      operationId: getMe
+      responses:
+        "200":
+          description: Staff dan cabang sesi ini.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionContext"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  # ---------------------------------------------------------------------------------------------
+  # Cabang — PRD §8.2
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/branches:
+    get:
+      tags: [master-data]
+      summary: Semua cabang
+      description: Kasir juga butuh kode & nama cabang untuk tampilan.
+      operationId: listBranches
+      responses:
+        "200":
+          description: Cabang urut `sort_order`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BranchListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/v1/branches/overview:
+    get:
+      tags: [master-data]
+      summary: Ringkasan per cabang (owner)
+      description: |
+        Omzet & transaksi pada `date` (dari `daily_sales`; nol sampai M2 mencatat penjualan), rasio
+        target, shift terakhir, dan nama pendek kasir aktif. `date` default hari ini WIB.
+      operationId: getBranchOverview
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Ringkasan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BranchOverviewResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/branches/{id}:
+    patch:
+      tags: [master-data]
+      summary: Ubah target harian dan/atau status aktif (owner)
+      description: |
+        Aturan (semua dicek sebelum ada yang ditulis): cabang ada (404) → `dailyTarget` > 0
+        (`TARGET_REQUIRED` "Target harian tidak boleh kosong — dikembalikan ke {target lama}.") →
+        cabang yang sedang dipakai perangkat pemanggil tidak bisa dinonaktifkan (`BRANCH_IN_USE`).
+        Nilai sama → `changed: false` tanpa audit. Audit `BRANCH_TARGET_CHANGED` "Ubah target harian
+        Cabang Tebet: Rp5.200.000 → Rp5.500.000" dan/atau `BRANCH_TOGGLED` "Nonaktifkan Cabang {nama}".
+        Cabang nonaktif menolak login & buka shift baru.
+      operationId: updateBranch
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBranchRequest"
+            example:
+              dailyTarget: 5500000
+      responses:
+        "200":
+          description: Cabang setelah perubahan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BranchChangeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  # ---------------------------------------------------------------------------------------------
+  # Staff — PRD §8.3
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/staff:
+    get:
+      tags: [master-data]
+      summary: Daftar akun staff
+      description: |
+        **Owner:** semua field `Staff`, filter opsional `branchId` & `active`.
+        **Kasir:** hanya staff aktif yang boleh bekerja di cabangnya (kasir cabang itu + owner), field
+        `StaffCandidate` saja — kandidat dialog PIN. Kasir yang mengirim `branchId` cabang lain →
+        `403 BRANCH_SCOPE`.
+      operationId: listStaff
+      parameters:
+        - name: branchId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: active
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Akun staff, tanpa data PIN.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffListResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [master-data]
+      summary: Tambah staff (owner)
+      description: |
+        Urutan (`AddStaffUseCase`): nama wajib (`NAME_REQUIRED`) → PIN 4–6 digit (`PIN_FORMAT` "PIN harus
+        4–6 digit.") → PIN tidak dipakai staff aktif lain (`PIN_TAKEN`) → kasir wajib punya cabang
+        (`CASHIER_NEEDS_BRANCH`). Owner selalu `branchId = null`. `shortName` diturunkan server. Audit
+        `STAFF_ADDED` "Tambah akun staff {nama} (kasir, Cabang Tebet) · PIN dibuat". Body tidak pernah
+        di-log.
+      operationId: createStaff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateStaffRequest"
+            example:
+              name: Dimas Pratama
+              pin: "4321"
+              role: KASIR
+              branchId: 7f1c2d3e-0000-4000-8000-000000000003
+      responses:
+        "201":
+          description: Akun dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/staff/{id}/reset-pin:
+    post:
+      tags: [master-data]
+      summary: Reset PIN (owner)
+      description: |
+        PIN 4 digit acak yang tidak bentrok dengan **semua** akun. PIN lama langsung tidak berlaku, semua
+        sesi staff tsb dicabut. PIN baru dikembalikan **sekali** — `Cache-Control: no-store`, tidak
+        pernah di-log. Audit `STAFF_PIN_RESET` "Reset PIN {nama} — PIN lama dicabut".
+      operationId: resetStaffPin
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: PIN baru.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetPinResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/staff/{id}:
+    patch:
+      tags: [master-data]
+      summary: Aktif/nonaktifkan akun (owner)
+      description: |
+        Menonaktifkan akun sendiri → `STAFF_SELF_DEACTIVATE`; owner aktif terakhir → `LAST_OWNER`.
+        Mengaktifkan akun yang PIN-nya kini dipakai staff aktif lain → `409 PIN_CONFLICT` (T2).
+        Menonaktifkan mencabut semua sesinya. Nilai sama → `changed: false` tanpa audit. Audit
+        `STAFF_TOGGLED` "Nonaktifkan akun {nama}" / "Aktifkan akun {nama}".
+      operationId: updateStaff
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToggleActiveRequest"
+      responses:
+        "200":
+          description: Akun setelah perubahan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffChangeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  # ---------------------------------------------------------------------------------------------
+  # Price list, loyalty, reward — PRD §8.4
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/services:
+    get:
+      tags: [master-data]
+      summary: Price list
+      description: Kasir selalu hanya melihat layanan aktif, apa pun nilai `includeInactive`.
+      operationId: listServices
+      parameters:
+        - $ref: "#/components/parameters/IncludeInactive"
+      responses:
+        "200":
+          description: Layanan urut `sort_order`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceListResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    post:
+      tags: [master-data]
+      summary: Tambah layanan (owner)
+      description: |
+        Urutan (`AddServiceUseCase`): nama wajib (`NAME_REQUIRED`) → harga > 0 (`PRICE_REQUIRED` "Harga
+        per unit belum diisi.") → nama unik tanpa beda huruf besar/kecil (`SERVICE_NAME_TAKEN`).
+        `category`/`unit` di luar Lampiran A → 400. `step` = 0,5 bila `unit = kg`, selain itu 1. Audit
+        `SERVICE_ADDED` "Tambah layanan {nama} — Rp{harga}/{unit} ({kategori})".
+      operationId: createService
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateServiceRequest"
+            example:
+              category: KILOAN_EXPRESS
+              name: Cuci Kering Express
+              price: 12000
+              unit: kg
+      responses:
+        "201":
+          description: Layanan dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/services/prices:
+    patch:
+      tags: [master-data]
+      summary: Simpan banyak harga sekaligus (owner)
+      description: |
+        Semua harga > 0 (`PRICE_REQUIRED` "Harga layanan tidak boleh kosong.") → semua id ada (404).
+        Satu transaksi; tiap perubahan menulis `service_price_history` + audit `SERVICE_PRICE_CHANGED`
+        "Ubah harga Cuci Setrika: Rp9.500 → Rp10.000 (semua cabang)", lalu satu audit ringkasan
+        "Simpan price list — {n} layanan aktif di semua cabang". Tanpa perubahan → tanpa audit. Order lama
+        tidak berubah (harga di-snapshot).
+      operationId: saveServicePrices
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavePricesRequest"
+            example:
+              prices:
+                0b8a7c6d-0000-4000-8000-000000000002: 11000
+      responses:
+        "200":
+          description: Seluruh price list setelah disimpan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavePricesResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/services/{id}:
+    patch:
+      tags: [master-data]
+      summary: Aktif/nonaktifkan layanan (owner)
+      description: |
+        Layanan nonaktif hilang dari POS; order lama tetap utuh. Nilai sama → `changed: false`. Audit
+        `SERVICE_TOGGLED` "Nonaktifkan layanan {nama} ({kategori}) — berlaku semua cabang".
+      operationId: updateService
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToggleActiveRequest"
+      responses:
+        "200":
+          description: Layanan setelah perubahan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceChangeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/loyalty/rate:
+    get:
+      tags: [master-data]
+      summary: Rate poin yang berlaku sekarang
+      operationId: getLoyaltyRate
+      responses:
+        "200":
+          description: Rate aktif.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoyaltyRate"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [master-data]
+      summary: Simpan rate poin (owner)
+      description: |
+        `rupiahPerStep` ≥ 1.000 ("Nominal belanja minimal Rp1.000.") lalu `pointsPerStep` ≥ 1 ("Poin
+        didapat minimal 1."), keduanya `RATE_INVALID`. Disimpan sebagai **baris baru** `loyalty_rates`
+        dengan `effectiveFrom = now` — riwayat tidak pernah diubah, jadi transaksi (termasuk offline)
+        tetap memakai rate pada `capturedAt`-nya. Nilai sama dengan rate aktif → `changed: false`. Audit
+        `LOYALTY_RATE_CHANGED` "Simpan pengaturan loyalty — Rp10.000 = 100 poin, berlaku semua cabang".
+      operationId: saveLoyaltyRate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRateRequest"
+            example:
+              rupiahPerStep: 10000
+              pointsPerStep: 100
+      responses:
+        "200":
+          description: Rate aktif setelah disimpan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RateChangeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/rewards:
+    get:
+      tags: [master-data]
+      summary: Katalog reward
+      description: Kasir selalu hanya melihat reward aktif.
+      operationId: listRewards
+      parameters:
+        - $ref: "#/components/parameters/IncludeInactive"
+      responses:
+        "200":
+          description: Reward urut `sort_order`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewardListResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    post:
+      tags: [master-data]
+      summary: Tambah reward (owner)
+      description: |
+        Nama wajib (`NAME_REQUIRED` "Nama reward wajib diisi.") → `cost` dan `value` > 0
+        (`REWARD_INVALID` "Poin dan nilai diskon wajib diisi."). `minSubtotal` opsional (T9, ditegakkan
+        saat redeem di M2); 0 atau kosong = tanpa minimum. `note` = "Setara Rp{value}". Audit
+        `REWARD_ADDED` "Tambah reward {nama} — 1.000 poin, nilai Rp10.000".
+      operationId: createReward
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRewardRequest"
+            example:
+              name: Diskon Rp25.000
+              cost: 2500
+              value: 25000
+              minSubtotal: 75000
+      responses:
+        "201":
+          description: Reward dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewardResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/rewards/{id}:
+    patch:
+      tags: [master-data]
+      summary: Aktif/nonaktifkan reward (owner)
+      description: Audit `REWARD_TOGGLED` "Nonaktifkan reward {nama} (1.500 poin) — berlaku semua cabang".
+      operationId: updateReward
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ToggleActiveRequest"
+      responses:
+        "200":
+          description: Reward setelah perubahan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RewardChangeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------------------------
+  # Customer — PRD §8.5
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/customers:
+    get:
+      tags: [customer]
+      summary: Cari customer
+      description: |
+        Tanpa `q`: kunjungan terbanyak dulu. Dengan `q`: nama mengandung `q` (tanpa beda huruf besar/kecil)
+        atau digit no HP mengandung digit di `q`. Customer berlaku lintas cabang.
+      operationId: searchCustomers
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Satu halaman customer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    post:
+      tags: [customer]
+      summary: Daftar customer baru
+      description: |
+        Urutan (`RegisterCustomerUseCase`): nama wajib (`NAME_REQUIRED`) → no HP valid (`PHONE_INVALID`
+        "Nomor WhatsApp belum valid (minimal 10 digit, diawali 08).") → no HP belum terdaftar di cabang
+        mana pun (`409 PHONE_ALREADY_REGISTERED`, `details.customer` berisi customer yang ada). `id`
+        opsional dari klien (UUID). `homeBranchId` = cabang token. Poin 0, kunjungan 0, `opt_in_at` bila
+        opt-in. Audit `CUSTOMER_REGISTERED` "Daftarkan customer {nama} ({phone}) · opt-in WA: ya|belum".
+        Pesan `OPT_IN_CONFIRM` dikirim bersama transaksi pertama (M2), bukan di sini.
+      operationId: registerCustomer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterCustomerRequest"
+            example:
+              name: Dewi Anggraini
+              phone: 0812-3390-4471
+              optIn: true
+      responses:
+        "201":
+          description: Customer terdaftar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/customers/{id}:
+    get:
+      tags: [customer]
+      summary: Detail customer
+      operationId: getCustomer
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Customer dengan saldo poin terbaru.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [customer]
+      summary: Ubah nama dan/atau consent WhatsApp
+      description: |
+        Nama kosong → `NAME_REQUIRED`. Opt-out mengisi `opt_out_at` dan membatalkan (`CANCELLED`) pesan WA
+        customer yang masih `QUEUED` dalam transaksi yang sama. Audit `CUSTOMER_UPDATED` (ganti nama,
+        opt-in) atau `CUSTOMER_OPTED_OUT`.
+      operationId: updateCustomer
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCustomerRequest"
+            example:
+              optIn: false
+      responses:
+        "200":
+          description: Customer setelah perubahan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerChangeResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/customers/{id}/points:
+    get:
+      tags: [customer]
+      summary: Riwayat ledger poin
+      description: Terbaru dulu. Saldo customer adalah jumlah ledger ini; baris dibuat oleh order (M2) dan impor (M3).
+      operationId: getCustomerPoints
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Satu halaman ledger.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PointsPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
 components:
   securitySchemes:
-    bearerAuth:
+    staffToken:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Access token JWT hasil `POST /auth/pin-login` (M1). Role dan cabang dibaca dari token, tidak pernah dari body.
-    deviceToken:
-      type: apiKey
-      in: header
-      name: X-Device-Token
-      description: Token perangkat hasil aktivasi (M1).
+      description: |
+        Access token staff (60 menit) dari `pin-login`, `refresh`, `switch-staff`, atau `switch-branch` —
+        satu-satunya kredensial API. Layar login (`login-options`, `pin-login`, `refresh`) tidak memakainya.
+        Sesinya dicek ulang di database setiap request — reset PIN, akun dinonaktifkan, atau perangkat
+        dicabut langsung berlaku. Role dan cabang dibaca dari sesi, tidak pernah dari body.
 
   parameters:
-    DeviceId:
+    DeviceIdRequired:
       name: X-Device-Id
       in: header
       required: true
-      description: Identitas perangkat, wajib di setiap request (PRD §6.1).
+      description: |
+        ID instalasi tablet: UUID yang dibuat aplikasi saat pertama dibuka dan disimpan permanen.
+        Mengidentifikasi tablet untuk batas PIN salah, satu sesi per tablet, dan pemblokiran oleh owner.
+      schema:
+        type: string
+        format: uuid
+    DeviceIdOptional:
+      name: X-Device-Id
+      in: header
+      required: false
+      description: |
+        ID instalasi tablet. Di endpoint ber-access-token, bila dikirim harus sama dengan tablet sesi
+        (kalau tidak → 401).
       schema:
         type: string
         format: uuid
     AppVersion:
       name: X-App-Version
       in: header
-      required: true
-      description: Versi aplikasi klien. Di bawah `MIN_APP_VERSION` → `426 APP_UPDATE_REQUIRED`.
+      required: false
+      description: Versi aplikasi klien. Di bawah `MIN_APP_VERSION` (atau kosong saat minimum di-set) → `426 APP_UPDATE_REQUIRED`.
       schema:
         type: string
         example: 1.4.0
@@ -137,12 +1100,27 @@ components:
       in: header
       required: true
       description: |
-        Wajib untuk semua mutasi transaksional (`POST /orders`, `/orders/sync`, `/shifts`,
+        Wajib untuk semua mutasi transaksional M2 (`POST /orders`, `/orders/sync`, `/shifts`,
         `/shifts/{id}/cash-entries`, `/shifts/{id}/close`). Kunci sama + body sama → respons
         tersimpan dikembalikan; body berbeda → `409 IDEMPOTENCY_MISMATCH`. Disimpan 7 hari.
       schema:
         type: string
         format: uuid
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IncludeInactive:
+      name: includeInactive
+      in: query
+      required: false
+      description: Owner saja; kasir selalu mendapat yang aktif.
+      schema:
+        type: boolean
+        default: false
     Cursor:
       name: cursor
       in: query
@@ -191,7 +1169,7 @@ components:
 
     ErrorBody:
       type: object
-      required: [code, message]
+      required: [code, message, details, requestId]
       properties:
         code:
           type: string
@@ -205,26 +1183,702 @@ components:
             pemberitahuan ke tim Android.
           example: Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi.
         details:
-          type: object
+          type: [object, "null"]
           additionalProperties: true
-          description: Konteks tambahan, mis. daftar field tidak valid atau harga terbaru.
+          description: Konteks tambahan, mis. `fields` yang tidak valid, `clearPin`, atau customer yang sudah ada.
         requestId:
-          type: string
+          type: [string, "null"]
           example: req_01J9K3M2Q7XF4T8B
 
-    CursorPage:
+    # ---- Perangkat & sesi ----------------------------------------------------------------------
+    Uuid:
+      type: string
+      format: uuid
+    NullableUuid:
+      type: [string, "null"]
+      format: uuid
+    Timestamp:
+      type: string
+      format: date-time
+      pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+    NullableTimestamp:
+      type: [string, "null"]
+      format: date-time
+      pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
+
+    Device:
+      type: object
+      required: [id, name, platform, appVersion, lastBranchId, firstSeenAt, lastSeenAt, pendingCount, revokedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          description: ID instalasi yang dikirim tablet sebagai `X-Device-Id`.
+        name:
+          type: string
+        platform:
+          type: string
+          enum: [ANDROID]
+        appVersion:
+          type: string
+        lastBranchId:
+          $ref: "#/components/schemas/NullableUuid"
+        firstSeenAt:
+          $ref: "#/components/schemas/Timestamp"
+        lastSeenAt:
+          $ref: "#/components/schemas/NullableTimestamp"
+        pendingCount:
+          type: integer
+          minimum: 0
+        revokedAt:
+          $ref: "#/components/schemas/NullableTimestamp"
+
+    DeviceListResponse:
       type: object
       required: [items]
       properties:
         items:
           type: array
-          items: {}
+          items:
+            $ref: "#/components/schemas/Device"
+
+    DeviceChangeResponse:
+      type: object
+      required: [device, changed]
+      properties:
+        device:
+          $ref: "#/components/schemas/Device"
+        changed:
+          type: boolean
+
+    LoginOptionsResponse:
+      type: object
+      required: [lastBranchId, branches]
+      properties:
+        lastBranchId:
+          $ref: "#/components/schemas/NullableUuid"
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoginBranch"
+
+    LoginBranch:
+      type: object
+      required: [id, code, name, address, hours, active, cashierNames, shift]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        code:
+          type: string
+        name:
+          type: string
+        address:
+          type: string
+        hours:
+          type: string
+        active:
+          type: boolean
+        cashierNames:
+          type: array
+          items:
+            type: string
+        shift:
+          type: object
+          required: [open, openedByName]
+          properties:
+            open:
+              type: boolean
+            openedByName:
+              type: [string, "null"]
+
+    PinLoginRequest:
+      type: object
+      required: [branchId, pin]
+      properties:
+        branchId:
+          type: string
+          format: uuid
+        pin:
+          type: string
+          pattern: "^[0-9]{4,6}$"
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+
+    StaffPinRequest:
+      type: object
+      required: [staffId, pin]
+      properties:
+        staffId:
+          type: string
+          format: uuid
+        pin:
+          type: string
+
+    SwitchBranchRequest:
+      type: object
+      required: [branchId]
+      properties:
+        branchId:
+          type: string
+          format: uuid
+
+    SessionContext:
+      type: object
+      required: [staff, branch]
+      properties:
+        staff:
+          $ref: "#/components/schemas/Staff"
+        branch:
+          $ref: "#/components/schemas/Branch"
+
+    TokenResponse:
+      type: object
+      required: [accessToken, accessTokenExpiresIn, refreshToken, refreshTokenExpiresIn, context]
+      properties:
+        accessToken:
+          type: string
+        accessTokenExpiresIn:
+          type: integer
+          description: Detik; 3600.
+        refreshToken:
+          type: string
+          pattern: "^rt_"
+        refreshTokenExpiresIn:
+          type: integer
+          description: Detik sampai sesi berakhir (maksimal 64800 = 18 jam sejak login).
+        context:
+          $ref: "#/components/schemas/SessionContext"
+
+    VerifyPinResponse:
+      type: object
+      required: [staff, staffProof, expiresIn]
+      properties:
+        staff:
+          $ref: "#/components/schemas/Staff"
+        staffProof:
+          type: string
+          pattern: "^sp_"
+        expiresIn:
+          type: integer
+          description: Detik; 300.
+
+    SwitchBranchResponse:
+      type: object
+      required: [changed, accessToken, accessTokenExpiresIn, refreshToken, refreshTokenExpiresIn, context]
+      properties:
+        changed:
+          type: boolean
+        accessToken:
+          type: [string, "null"]
+        accessTokenExpiresIn:
+          type: [integer, "null"]
+        refreshToken:
+          type: [string, "null"]
+        refreshTokenExpiresIn:
+          type: [integer, "null"]
+        context:
+          $ref: "#/components/schemas/SessionContext"
+
+    LogoutResponse:
+      type: object
+      required: [lastBranchId]
+      properties:
+        lastBranchId:
+          $ref: "#/components/schemas/Uuid"
+
+    # ---- Cabang --------------------------------------------------------------------------------
+    Branch:
+      type: object
+      required: [id, code, name, address, phone, hours, dailyTarget, active]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        code:
+          type: string
+          pattern: "^[A-Z]{2,5}$"
+        name:
+          type: string
+        address:
+          type: string
+        phone:
+          type: string
+        hours:
+          type: string
+        dailyTarget:
+          type: integer
+          minimum: 1
+        active:
+          type: boolean
+
+    BranchListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Branch"
+
+    ShiftSummary:
+      type: object
+      required: [id, open, openedByName, openedAt, closedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        open:
+          type: boolean
+        openedByName:
+          type: string
+        openedAt:
+          $ref: "#/components/schemas/Timestamp"
+        closedAt:
+          $ref: "#/components/schemas/NullableTimestamp"
+
+    BranchOverviewItem:
+      type: object
+      required: [branch, revenue, txCount, targetRatio, latestShift, activeCashiers]
+      properties:
+        branch:
+          $ref: "#/components/schemas/Branch"
+        revenue:
+          type: integer
+          minimum: 0
+        txCount:
+          type: integer
+          minimum: 0
+        targetRatio:
+          type: number
+          minimum: 0
+          description: Omzet ÷ target harian.
+        latestShift:
+          oneOf:
+            - $ref: "#/components/schemas/ShiftSummary"
+            - type: "null"
+        activeCashiers:
+          type: array
+          items:
+            type: string
+
+    BranchOverviewResponse:
+      type: object
+      required: [date, items]
+      properties:
+        date:
+          type: string
+          format: date
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/BranchOverviewItem"
+
+    UpdateBranchRequest:
+      type: object
+      properties:
+        dailyTarget:
+          type: [integer, "null"]
+        active:
+          type: [boolean, "null"]
+
+    BranchChangeResponse:
+      type: object
+      required: [branch, changed]
+      properties:
+        branch:
+          $ref: "#/components/schemas/Branch"
+        changed:
+          type: boolean
+
+    # ---- Staff ---------------------------------------------------------------------------------
+    Staff:
+      type: object
+      required: [id, name, shortName, role, branchId, active, lastLoginAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        shortName:
+          type: string
+          example: Siti N.
+        role:
+          type: string
+          enum: [KASIR, OWNER]
+        branchId:
+          $ref: "#/components/schemas/NullableUuid"
+        active:
+          type: boolean
+        lastLoginAt:
+          $ref: "#/components/schemas/NullableTimestamp"
+
+    StaffCandidate:
+      type: object
+      required: [id, name, shortName, role]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        shortName:
+          type: string
+        role:
+          type: string
+          enum: [KASIR, OWNER]
+
+    StaffListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/Staff"
+              - $ref: "#/components/schemas/StaffCandidate"
+
+    CreateStaffRequest:
+      type: object
+      required: [name, pin, role]
+      properties:
+        name:
+          type: string
+        pin:
+          type: string
+          pattern: "^[0-9]{4,6}$"
+        role:
+          type: string
+          enum: [KASIR, OWNER]
+        branchId:
+          $ref: "#/components/schemas/NullableUuid"
+
+    StaffResponse:
+      type: object
+      required: [staff]
+      properties:
+        staff:
+          $ref: "#/components/schemas/Staff"
+
+    StaffChangeResponse:
+      type: object
+      required: [staff, changed]
+      properties:
+        staff:
+          $ref: "#/components/schemas/Staff"
+        changed:
+          type: boolean
+
+    ResetPinResponse:
+      type: object
+      required: [staff, pin]
+      properties:
+        staff:
+          $ref: "#/components/schemas/Staff"
+        pin:
+          type: string
+          pattern: "^[0-9]{4}$"
+
+    ToggleActiveRequest:
+      type: object
+      required: [active]
+      properties:
+        active:
+          type: boolean
+
+    # ---- Katalog -------------------------------------------------------------------------------
+    Service:
+      type: object
+      required: [id, category, name, price, unit, step, active]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        category:
+          type: string
+          enum: [KILOAN_REGULER, KILOAN_EXPRESS, SATUAN, DRY_CLEAN]
+        name:
+          type: string
+        price:
+          type: integer
+          minimum: 1
+        unit:
+          type: string
+          enum: [kg, pcs, pasang, m²]
+        step:
+          type: number
+          enum: [0.5, 1.0]
+        active:
+          type: boolean
+
+    ServiceListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Service"
+
+    CreateServiceRequest:
+      type: object
+      required: [category, name, price, unit]
+      properties:
+        category:
+          type: string
+          enum: [KILOAN_REGULER, KILOAN_EXPRESS, SATUAN, DRY_CLEAN]
+        name:
+          type: string
+        price:
+          type: integer
+        unit:
+          type: string
+          enum: [kg, pcs, pasang, m²]
+
+    ServiceResponse:
+      type: object
+      required: [service]
+      properties:
+        service:
+          $ref: "#/components/schemas/Service"
+
+    ServiceChangeResponse:
+      type: object
+      required: [service, changed]
+      properties:
+        service:
+          $ref: "#/components/schemas/Service"
+        changed:
+          type: boolean
+
+    SavePricesRequest:
+      type: object
+      required: [prices]
+      properties:
+        prices:
+          type: object
+          description: "`{ \"<serviceId>\": hargaBaru }`"
+          additionalProperties:
+            type: integer
+
+    SavePricesResponse:
+      type: object
+      required: [items, changedCount]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Service"
+        changedCount:
+          type: integer
+          minimum: 0
+
+    LoyaltyRate:
+      type: object
+      required: [id, rupiahPerStep, pointsPerStep, effectiveFrom]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        rupiahPerStep:
+          type: integer
+          minimum: 1000
+        pointsPerStep:
+          type: integer
+          minimum: 1
+        effectiveFrom:
+          $ref: "#/components/schemas/Timestamp"
+
+    SaveRateRequest:
+      type: object
+      required: [rupiahPerStep, pointsPerStep]
+      properties:
+        rupiahPerStep:
+          type: integer
+        pointsPerStep:
+          type: integer
+
+    RateChangeResponse:
+      type: object
+      required: [rate, changed]
+      properties:
+        rate:
+          $ref: "#/components/schemas/LoyaltyRate"
+        changed:
+          type: boolean
+
+    Reward:
+      type: object
+      required: [id, name, cost, value, note, minSubtotal, usedCount, active]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        cost:
+          type: integer
+          minimum: 1
+          description: Poin yang ditukar.
+        value:
+          type: integer
+          minimum: 1
+          description: Diskon rupiah.
+        note:
+          type: string
+        minSubtotal:
+          type: [integer, "null"]
+          minimum: 1
+          description: Minimum belanja (T9); `null` = tanpa minimum.
+        usedCount:
+          type: integer
+          minimum: 0
+        active:
+          type: boolean
+
+    RewardListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Reward"
+
+    CreateRewardRequest:
+      type: object
+      required: [name, cost, value]
+      properties:
+        name:
+          type: string
+        cost:
+          type: integer
+        value:
+          type: integer
+        minSubtotal:
+          type: [integer, "null"]
+
+    RewardResponse:
+      type: object
+      required: [reward]
+      properties:
+        reward:
+          $ref: "#/components/schemas/Reward"
+
+    RewardChangeResponse:
+      type: object
+      required: [reward, changed]
+      properties:
+        reward:
+          $ref: "#/components/schemas/Reward"
+        changed:
+          type: boolean
+
+    # ---- Customer ------------------------------------------------------------------------------
+    Customer:
+      type: object
+      required: [id, name, phone, points, optIn, visits, homeBranchId]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        phone:
+          type: string
+          example: 0812-3390-4471
+        points:
+          type: integer
+          minimum: 0
+        optIn:
+          type: boolean
+        visits:
+          type: integer
+          minimum: 0
+        homeBranchId:
+          $ref: "#/components/schemas/Uuid"
+
+    CustomerPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+        nextCursor:
+          type: [string, "null"]
+
+    RegisterCustomerRequest:
+      type: object
+      required: [name, phone]
+      properties:
+        id:
+          $ref: "#/components/schemas/NullableUuid"
+        name:
+          type: string
+        phone:
+          type: string
+        optIn:
+          type: boolean
+          default: false
+
+    CustomerResponse:
+      type: object
+      required: [customer]
+      properties:
+        customer:
+          $ref: "#/components/schemas/Customer"
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        name:
+          type: [string, "null"]
+        optIn:
+          type: [boolean, "null"]
+
+    CustomerChangeResponse:
+      type: object
+      required: [customer, changed]
+      properties:
+        customer:
+          $ref: "#/components/schemas/Customer"
+        changed:
+          type: boolean
+
+    PointsEntry:
+      type: object
+      required: [id, type, delta, balanceAfter, orderId, staffId, createdAt]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [EARN, REDEEM, IMPORT, ADJUST]
+        delta:
+          type: integer
+        balanceAfter:
+          type: integer
+          minimum: 0
+        orderId:
+          $ref: "#/components/schemas/NullableUuid"
+        staffId:
+          $ref: "#/components/schemas/NullableUuid"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    PointsPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PointsEntry"
         nextCursor:
           type: [string, "null"]
 
   responses:
     ValidationError:
-      description: "400 — body tidak valid secara format."
+      description: "400 — body atau parameter tidak valid secara format; `details.fields` berisi daftar field."
       content:
         application/json:
           schema:
@@ -233,19 +1887,45 @@ components:
             error:
               code: VALIDATION_ERROR
               message: Data yang dikirim tidak lengkap atau formatnya salah.
+              details:
+                fields: [branchId]
               requestId: req_01J9K3M2Q7XF4T8B
     Unauthenticated:
-      description: "401 — token tidak ada, salah, atau kedaluwarsa."
+      description: "401 `UNAUTHENTICATED` / `TOKEN_EXPIRED` — token tidak ada, salah, kedaluwarsa, atau sesinya dicabut."
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: TOKEN_EXPIRED
+              message: Sesi berakhir — silakan login ulang dengan PIN.
+              details: null
+              requestId: req_01J9K3M2Q7XF4T8B
+    DeviceBlocked:
+      description: "401 `DEVICE_UNAUTHORIZED` — tablet diblokir owner. Klien menampilkan pesannya; tablet ini tidak bisa dipakai login lagi."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: DEVICE_UNAUTHORIZED
+              message: Tablet ini sudah diblokir owner — hubungi owner untuk memakai tablet lain.
+              details: null
+              requestId: req_01J9K3M2Q7XF4T8B
     Forbidden:
-      description: "403 — role tidak cukup, atau kasir mengakses cabang lain (`BRANCH_SCOPE`)."
+      description: "403 — `FORBIDDEN` (fitur owner), `OWNER_ONLY`, atau `BRANCH_SCOPE` (kasir mengakses cabang lain)."
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: FORBIDDEN
+              message: Fitur ini hanya untuk owner/admin.
+              details: null
+              requestId: req_01J9K3M2Q7XF4T8B
     NotFound:
       description: "404 — resource tidak ada."
       content:
@@ -255,17 +1935,29 @@ components:
           example:
             error:
               code: NOT_FOUND
-              message: Order TBT-0829-015 tidak ditemukan.
+              message: Cabang tidak ditemukan.
+              details: null
+              requestId: req_01J9K3M2Q7XF4T8B
     Conflict:
-      description: "409 — bentrok status, versi, atau duplikat."
+      description: "409 — bentrok status, versi, atau duplikat (`PIN_CONFLICT`, `PHONE_ALREADY_REGISTERED`, …)."
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
           example:
             error:
-              code: STATUS_CHANGED
-              message: Status order sudah diubah dari perangkat lain.
+              code: PHONE_ALREADY_REGISTERED
+              message: Nomor ini sudah terdaftar (bisa dari cabang lain) — pakai pencarian untuk memilihnya.
+              details:
+                customer:
+                  id: 3c9d0000-0000-4000-8000-000000000001
+                  name: Dewi Anggraini
+                  phone: 0812-3390-4471
+                  points: 2340
+                  optIn: true
+                  visits: 18
+                  homeBranchId: 7f1c2d3e-0000-4000-8000-000000000001
+              requestId: req_01J9K3M2Q7XF4T8B
     BusinessRule:
       description: "422 — aturan bisnis dilanggar (PRD Lampiran B)."
       content:
@@ -274,8 +1966,11 @@ components:
             $ref: "#/components/schemas/ErrorEnvelope"
           example:
             error:
-              code: EMPTY_CART
-              message: Belum ada layanan di order ini.
+              code: STAFF_WRONG_BRANCH
+              message: Siti Nurhaliza terdaftar di Cabang Tebet — tidak bisa login di perangkat Cabang Bintaro.
+              details:
+                clearPin: true
+              requestId: req_01J9K3M2Q7XF4T8B
     PinLocked:
       description: "423 — terlalu banyak PIN salah; header `Retry-After` berisi detik."
       headers:
@@ -290,14 +1985,17 @@ components:
             error:
               code: PIN_LOCKED
               message: Terlalu banyak PIN salah. Coba lagi dalam 5 menit.
+              details:
+                clearPin: true
+              requestId: req_01J9K3M2Q7XF4T8B
     AppUpdateRequired:
-      description: "426 — versi aplikasi terlalu lama."
+      description: "426 — versi aplikasi terlalu lama; `details.minAppVersion` berisi versi minimum."
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     RateLimited:
-      description: "429 — melewati batas 120 request/menit per perangkat."
+      description: "429 — melewati batas 120 request/menit per perangkat, atau 20 percobaan login PIN per alamat jaringan per 5 menit; header `Retry-After`."
       content:
         application/json:
           schema:
@@ -312,6 +2010,7 @@ components:
             error:
               code: INTERNAL_ERROR
               message: Terjadi gangguan di server. Coba lagi sebentar lagi.
+              details: null
               requestId: req_01J9K3M2Q7XF4T8B
 
 x-planned-endpoints:
@@ -319,43 +2018,6 @@ x-planned-endpoints:
     Permukaan API v1 sesuai PRD §8, dengan milestone tempat tiap endpoint dispesifikasikan penuh di
     `paths`. Daftar ini adalah rencana, bukan kontrak — yang mengikat hanyalah yang sudah ada di
     `paths`.
-  M1:
-    auth:
-      - POST /api/v1/devices/activate
-      - POST /api/v1/devices/activation-codes
-      - GET /api/v1/devices
-      - DELETE /api/v1/devices/{id}
-      - GET /api/v1/login-options
-      - POST /api/v1/auth/pin-login
-      - POST /api/v1/auth/refresh
-      - POST /api/v1/auth/verify-pin
-      - POST /api/v1/auth/switch-staff
-      - POST /api/v1/auth/switch-branch
-      - POST /api/v1/auth/logout
-      - GET /api/v1/me
-    master-data:
-      - GET /api/v1/branches
-      - GET /api/v1/branches/overview
-      - PATCH /api/v1/branches/{id}
-      - GET /api/v1/staff
-      - POST /api/v1/staff
-      - POST /api/v1/staff/{id}/reset-pin
-      - PATCH /api/v1/staff/{id}
-      - GET /api/v1/services
-      - POST /api/v1/services
-      - PATCH /api/v1/services/prices
-      - PATCH /api/v1/services/{id}
-      - GET /api/v1/loyalty/rate
-      - PUT /api/v1/loyalty/rate
-      - GET /api/v1/rewards
-      - POST /api/v1/rewards
-      - PATCH /api/v1/rewards/{id}
-    customer:
-      - GET /api/v1/customers
-      - POST /api/v1/customers
-      - GET /api/v1/customers/{id}
-      - PATCH /api/v1/customers/{id}
-      - GET /api/v1/customers/{id}/points
   M2:
     order:
       - POST /api/v1/orders

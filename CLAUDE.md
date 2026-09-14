@@ -37,11 +37,13 @@ architecture, conventions, and constraints Claude must follow.
 ```
 src/main/kotlin/id/primawash/api/
   Application.kt      -> entry point: plugins, DI, routing mount
-  plugins/            -> Serialization, StatusPages, Auth, CallLogging, RateLimit
+  plugins/            -> Serialization, StatusPages, Auth, Monitoring, RateLimit, AppVersion,
+                         DependencyInjection (Koin), Routing
   common/             -> ErrorEnvelope, BusinessRuleException, Money, WibClock,
                          Idempotency, Pagination, AuditWriter
   db/                 -> Database.kt (Hikari + Exposed), Tables.kt, tx helpers
-  auth/ branch/ staff/ catalog/ customer/ order/ shift/ wa/ report/ sync/
+  auth/ device/ branch/ staff/ catalog/ customer/ order/ shift/ wa/ report/ sync/
+  tools/              -> CLI entry points: SeedPilot
 src/main/resources/db/migration/   -> V1__init.sql, V2__…
 ```
 
@@ -136,13 +138,18 @@ Every error uses one envelope, produced centrally in `StatusPages`:
 - PIN space is 4–6 digits — small enough to brute-force offline, so the
   protection is layered: `pin_lookup = HMAC-SHA256(PIN_PEPPER, pin)` for
   lookup (pepper lives in the secret manager, **never in the database**),
-  `pin_hash = Argon2id(pin)` for verification, plus rate limiting and device
-  binding.
+  `pin_hash = Argon2id(pin)` for verification, plus rate limiting.
+- **No device activation** (owner decision, 14 Sep 2026 — `docs/prd-gaps-m1.md`
+  §0, overrides PRD §12.1): the login screen is public, "pick branch → PIN".
+  The app sends a self-generated installation UUID as `X-Device-Id`; it keys
+  the per-tablet PIN lock, one session per tablet, and owner blocking. Do not
+  reintroduce a user-visible activation step without the owner's approval.
 - **Never log a PIN**, in any form, at any level. Redact bodies for `/auth/*`
   and `/staff*`.
 - Rate limits: 5 wrong PINs per device in 5 min → `423` for 5 min; 5 consecutive
-  wrong PINs per account → 15 min lock + audit. Every failed login is audited
-  (without the PIN). General limit: 120 req/min per device.
+  wrong PINs per account → 15 min lock + audit; 20 PIN login attempts per
+  network address in 5 min → `429`. Every failed login is audited (without the
+  PIN). General limit: 120 req/min per device.
 - **Do not add a "does this PIN belong to an active account?" endpoint.** The
   client's `matchesActivePin()` auto-submit helper must stay client-side; as an
   API it is a PIN-guessing oracle that bypasses failed-login accounting.
@@ -230,7 +237,8 @@ touching a related area, check the PRD section named here.
 ## Git & Commit Convention
 - Conventional Commits: `feat:`, `fix:`, `refactor:`, `chore:`, `test:`
 - Branch naming: `feature/<name>`, `bugfix/<name>`, `hotfix/<name>`
-- A PR that changes the API surface updates `openapi.yaml` in the same PR.
+- A PR that changes the API surface updates `openapi.yaml` and `docs/api-integration.md`
+  (the Android team's guide) in the same PR.
 
 ## Do
 - Read the relevant PRD section before writing an endpoint — the validation

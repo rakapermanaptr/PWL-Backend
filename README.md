@@ -15,26 +15,29 @@ offline**.
 
 ## Status
 
-**M0 berjalan — fondasi sudah bisa dijalankan.** Yang sudah ada: project Gradle/Ktor (JVM 21),
-skema lengkap `V1__init.sql` + Flyway, seed pilot, endpoint health, amplop error terpusat, CI
-GitHub Actions, image Docker, draft `openapi.yaml`, dan staging di
-<https://pwl-cashier-staging-rvz75.ondigitalocean.app> (baru `/health` dan `/health/ready`). Yang
-belum: seluruh endpoint bisnis — itu M1 dan seterusnya.
+**M1 selesai di `development` — identitas & master data.** Di atas fondasi M0 (Gradle/Ktor JVM 21,
+Flyway, seed pilot, CI, Docker, staging di <https://pwl-cashier-staging-rvz75.ondigitalocean.app>)
+sekarang ada: login "pilih cabang → ketik PIN" tanpa aktivasi perangkat, batas percobaan per tablet,
+per akun & per alamat jaringan, sesi
+JWT + refresh token berotasi, ganti staff/cabang, cabang, staff, price list, loyalty rate, reward,
+customer, dan audit untuk setiap mutasi. `openapi.yaml` menspesifikasikan semua endpoint M1 dan
+setiap respons divalidasi terhadapnya. Kode/pesan yang belum ada di PRD dicatat di
+[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md). Yang belum: transaksi (M2) dan seterusnya.
 
 | Sudah jalan di M0 | Perintah |
 |---|---|
 | Migrasi ke Postgres lokal | `./gradlew flywayMigrate` |
 | Master data pilot (PRD Lampiran D) | `./gradlew seedPilot` |
-| API + health | `./gradlew run` → `GET /health`, `GET /health/ready` |
-| Unit test aturan uang/waktu/telepon/PIN | `./gradlew test` |
-| Constraint skema di Postgres asli | `./gradlew integrationTest` |
-| Health terhadap `openapi.yaml` | `./gradlew contractTest` |
+| API | `./gradlew run` → `/health`, `/api/v1/…` |
+| Unit test aturan bisnis Service | `./gradlew test` |
+| Alur API + constraint + konkurensi di Postgres asli | `./gradlew integrationTest` |
+| Setiap endpoint terhadap `openapi.yaml` | `./gradlew contractTest` |
 | Lint | `./gradlew ktlintCheck detekt` |
 
 | Milestone | Isi | Status |
 |---|---|---|
-| M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | 🔨 staging aktif, skema direview (V2 di `development`) |
-| M1 Identitas & master data | Aktivasi perangkat, PIN login, cabang, staff, price list, loyalty, reward, customer, audit | ⬜ |
+| M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | ✅ staging aktif, skema V2 di `main` |
+| M1 Identitas & master data | Login PIN tanpa aktivasi, cabang, staff, price list, loyalty, reward, customer, audit | 🔨 selesai di `development`, belum di staging |
 | M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | ⬜ |
 | M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | ⬜ |
 | M4 Shadow mode | Dry-run 3–5 hari paralel dengan SaaS lama + UAT (belum mengirim WA) | ⬜ |
@@ -136,11 +139,13 @@ pwl-cashier/
 └── src/
     ├── main/kotlin/id/primawash/api/
     │   ├── Application.kt        # entry point, install plugin, mount routing
-    │   ├── plugins/              # Serialization, StatusPages, Auth, CallLogging, RateLimit
+    │   ├── plugins/              # Serialization, StatusPages, Auth, Monitoring, RateLimit,
+    │   │                         #   AppVersion (426), DependencyInjection (Koin), Routing
     │   ├── common/               # ErrorEnvelope, BusinessRuleException, Money, WibClock,
     │   │                         #   Idempotency, Pagination, AuditWriter
     │   ├── db/                   # Database.kt (Hikari+Exposed), Tables.kt, tx helpers
-    │   ├── auth/                 # aktivasi perangkat, PIN login/refresh/switch, sesi, PinHasher
+    │   ├── auth/                 # PIN login/refresh/verify/switch, sesi, JWT, PinHasher
+    │   ├── device/               # tablet (X-Device-Id): pencatatan otomatis, daftar, blokir
     │   ├── branch/               # cabang + overview owner
     │   ├── staff/                # akun staff, reset PIN, aktif/nonaktif
     │   ├── catalog/              # services, price history, loyalty rate, rewards
@@ -150,7 +155,8 @@ pwl-cashier/
     │   ├── wa/                   # outbox writer (M2); worker, Cloud API client,
     │   │                         #   webhook, failures (M5 — fase akhir)
     │   ├── report/               # dashboard, daily sales, audit query
-    │   └── sync/                 # bootstrap, changes, heartbeat perangkat
+    │   ├── sync/                 # bootstrap, changes, heartbeat perangkat
+    │   └── tools/                # SeedPilot (CLI)
     ├── main/resources/
     │   ├── db/migration/         # Flyway: V1__init.sql, V2__…
     │   ├── application.conf
@@ -192,6 +198,13 @@ dan samakan `DATABASE_URL` di `.env` — port container bisa diatur lewat `DB_PO
 Seed data pilot (3 cabang, price list, reward, rate, staff) dijalankan lewat `./gradlew seedPilot`
 — **hanya untuk `dev`/`staging`**. Di produksi master data dibuat lewat endpoint owner, dan PIN demo
 wajib diganti sebelum go-live.
+
+### Login di tablet
+
+Tidak ada langkah aktivasi (keputusan owner — PRD §12.1 Draft 1.1, [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) bagian 0).
+Panduan lengkap untuk aplikasi Android: [`docs/api-integration.md`](docs/api-integration.md).
+Aplikasi membuat UUID instalasi saat pertama dibuka dan mengirimnya sebagai `X-Device-Id`; alurnya
+`GET /api/v1/login-options` → pilih cabang → `POST /api/v1/auth/pin-login` → access token.
 
 ### Environment variables
 
@@ -252,7 +265,8 @@ kosong, itu bug.
 | Paginasi | Cursor — `?limit=50&cursor=<opaque>` → `{ "items": [...], "nextCursor": … }` |
 | Idempotensi | Header `Idempotency-Key` **wajib** di `POST /orders`, `/orders/sync`, `/shifts`, `/shifts/{id}/cash-entries`, `/shifts/{id}/close` |
 | Konkurensi | Resource yang bisa diubah dua perangkat membawa `version` / `fromStatus` → `409` bila berubah |
-| Header wajib | `X-Device-Id`, `X-App-Version` di setiap request |
+| Autentikasi | Layar login publik (`login-options`, `pin-login`, `refresh`); sisanya `Authorization: Bearer <accessToken>` |
+| Header | `X-Device-Id` (UUID instalasi) wajib di `pin-login`/`refresh`, harus cocok dengan sesi bila dikirim di endpoint lain; `X-App-Version` (→ `426` bila di bawah `MIN_APP_VERSION`) |
 
 Semua error memakai amplop yang sama, dan **`message` adalah kalimat Bahasa Indonesia yang siap
 ditampilkan ke kasir apa adanya**:
@@ -275,7 +289,7 @@ case klien yang sudah berjalan, supaya UX kasir tidak berubah.
 
 | Domain | Endpoint |
 |---|---|
-| Perangkat & auth | `POST /devices/activate` · `POST /devices/activation-codes` · `GET/DELETE /devices` · `GET /login-options` · `POST /auth/pin-login` · `/auth/refresh` · `/auth/verify-pin` · `/auth/switch-staff` · `/auth/switch-branch` · `/auth/logout` · `GET /me` |
+| Perangkat & auth | `GET/DELETE /devices` · `GET /login-options` · `POST /auth/pin-login` · `/auth/refresh` · `/auth/verify-pin` · `/auth/switch-staff` · `/auth/switch-branch` · `/auth/logout` · `GET /me` |
 | Cabang | `GET /branches` · `GET /branches/overview` · `PATCH /branches/{id}` |
 | Staff | `GET /staff` · `POST /staff` · `POST /staff/{id}/reset-pin` · `PATCH /staff/{id}` |
 | Katalog | `GET/POST /services` · `PATCH /services/prices` · `PATCH /services/{id}` · `GET/PUT /loyalty/rate` · `GET/POST /rewards` · `PATCH /rewards/{id}` |
@@ -423,4 +437,6 @@ Langkah 2 memakai migrasi/skrip operasional sekali pakai, bukan `UPDATE` manual 
 | Aplikasi klien Android | `~/AndroidStudioProjects/PrimaWash` |
 | Desain v2 multi-cabang | `~/Website/prima-wash-laundry` |
 | Hak akses database & operasional | [`docs/ops/database-roles.md`](docs/ops/database-roles.md) |
+| **Panduan integrasi API untuk tim Android** | [`docs/api-integration.md`](docs/api-integration.md) |
+| Celah PRD yang diisi di M1 (untuk PRD & tim Android) | [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) |
 | Panduan kerja untuk Claude | [`CLAUDE.md`](CLAUDE.md) |

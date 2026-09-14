@@ -92,7 +92,7 @@ abstract class SchemaTestBase {
     ): String =
         queryId(
             connection,
-            "INSERT INTO devices (name, token_hash) VALUES ('$name', md5('$name') || md5('$name')) RETURNING id",
+            "INSERT INTO devices (name) VALUES ('$name') RETURNING id",
         )
 
     protected fun insertIdempotencyKey(
