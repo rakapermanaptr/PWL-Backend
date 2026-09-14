@@ -13,6 +13,7 @@ junit5 = "5.13.4"
 kotest = "6.2.5"
 mockk = "1.14.11"
 testcontainers = "1.21.4"
+jsonSchemaValidator = "3.0.7"
 ktlint = "14.2.0"
 detekt = "1.23.8"
 
@@ -27,6 +28,9 @@ ktor-server-status-pages = { module = "io.ktor:ktor-server-status-pages", versio
 ktor-server-call-logging = { module = "io.ktor:ktor-server-call-logging", version.ref = "ktor" }
 ktor-server-call-id = { module = "io.ktor:ktor-server-call-id", version.ref = "ktor" }
 ktor-server-default-headers = { module = "io.ktor:ktor-server-default-headers", version.ref = "ktor" }
+ktor-server-auth = { module = "io.ktor:ktor-server-auth", version.ref = "ktor" }
+ktor-server-auth-jwt = { module = "io.ktor:ktor-server-auth-jwt", version.ref = "ktor" }
+ktor-server-rate-limit = { module = "io.ktor:ktor-server-rate-limit", version.ref = "ktor" }
 ktor-server-test-host = { module = "io.ktor:ktor-server-test-host", version.ref = "ktor" }
 
 # Persistence
@@ -52,6 +56,7 @@ kotest-assertions = { module = "io.kotest:kotest-assertions-core", version.ref =
 mockk = { module = "io.mockk:mockk", version.ref = "mockk" }
 testcontainers-junit = { module = "org.testcontainers:junit-jupiter", version.ref = "testcontainers" }
 testcontainers-postgresql = { module = "org.testcontainers:postgresql", version.ref = "testcontainers" }
+json-schema-validator = { module = "com.networknt:json-schema-validator", version.ref = "jsonSchemaValidator" }
 
 [bundles]
 ktor-server = [
@@ -64,6 +69,9 @@ ktor-server = [
     "ktor-server-call-logging",
     "ktor-server-call-id",
     "ktor-server-default-headers",
+    "ktor-server-auth",
+    "ktor-server-auth-jwt",
+    "ktor-server-rate-limit",
 ]
 persistence = [
     "exposed-core",
@@ -82,6 +90,10 @@ test-unit = [
 test-containers = [
     "testcontainers-junit",
     "testcontainers-postgresql",
+]
+# json-schema-validator 3.x brings Jackson 3 (tools.jackson) including its YAML reader.
+test-contract = [
+    "json-schema-validator",
 ]
 
 [plugins]

@@ -24,6 +24,27 @@ object PhoneNumber {
         }
     }
 
+    /**
+     * The client's `PhoneNumber.validate`, rule for rule (PRD §8.5): only digits, spaces, `-` and `+`;
+     * a `62` prefix becomes `0`; 10–13 digits starting with `08`. Returns the `08…` digits, or the
+     * Indonesian reason — shown verbatim per row in the customer import preview.
+     */
+    fun validate(raw: String): Result<String> {
+        val trimmed = raw.trim()
+        if (trimmed.any { !it.isDigit() && it !in ALLOWED_SEPARATORS }) return failure(UNRECOGNISED)
+        val digits = trimmed.filter { it.isDigit() }.let { if (it.startsWith("62")) "0" + it.drop(2) else it }
+        return when {
+            digits.length < MIN_DIGITS -> failure("Nomor HP kurang dari 10 digit")
+            digits.length > MAX_DIGITS || !digits.startsWith("08") -> failure(UNRECOGNISED)
+            else -> Result.success(digits)
+        }
+    }
+
+    private const val UNRECOGNISED = "Format nomor tidak dikenali"
+    private const val ALLOWED_SEPARATORS = " -+"
+
+    private fun failure(reason: String): Result<String> = Result.failure(IllegalArgumentException(reason))
+
     fun isValid(raw: String): Boolean {
         val digits = digits(raw)
         return digits.startsWith("08") && digits.length in MIN_DIGITS..MAX_DIGITS

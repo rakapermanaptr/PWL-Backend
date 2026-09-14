@@ -28,6 +28,11 @@ object ErrorCodes {
     const val BRANCH_IN_USE = "BRANCH_IN_USE"
     const val OWNER_ONLY = "OWNER_ONLY"
 
+    // M1 additions — not in Lampiran B yet; recorded in docs/prd-gaps-m1.md for the PRD and Android.
+    const val DEVICE_UNAUTHORIZED = "DEVICE_UNAUTHORIZED"
+    const val ACTIVATION_CODE_INVALID = "ACTIVATION_CODE_INVALID"
+    const val STAFF_REQUIRED = "STAFF_REQUIRED"
+
     // PIN & staff
     const val PIN_FORMAT = "PIN_FORMAT"
     const val PIN_UNKNOWN = "PIN_UNKNOWN"

@@ -27,6 +27,8 @@ import org.slf4j.LoggerFactory
 
 private const val INTERNAL_ERROR_MESSAGE = "Terjadi gangguan di server. Coba lagi sebentar lagi."
 private const val ROUTE_NOT_FOUND_MESSAGE = "Alamat yang diminta tidak ada di server."
+private const val RATE_LIMITED_MESSAGE =
+    "Terlalu banyak permintaan dari perangkat ini — tunggu sebentar lalu coba lagi."
 
 /**
  * The single place where an error becomes an HTTP response (PRD §6.2). Routes never build error
@@ -68,6 +70,11 @@ fun Application.configureStatusPages() {
 
         status(HttpStatusCode.NotFound) { call, _ ->
             call.respondError(HttpStatusCode.NotFound, ErrorCodes.NOT_FOUND, ROUTE_NOT_FOUND_MESSAGE, null)
+        }
+
+        // Raised by the RateLimit plugin, which has already set `Retry-After`.
+        status(HttpStatusCode.TooManyRequests) { call, _ ->
+            call.respondError(HttpStatusCode.TooManyRequests, ErrorCodes.RATE_LIMITED, RATE_LIMITED_MESSAGE, null)
         }
     }
 }

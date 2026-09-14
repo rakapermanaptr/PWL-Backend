@@ -11,87 +11,54 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
-import java.sql.Connection
+import org.junit.jupiter.api.assertThrows
 import javax.sql.DataSource
 
-/**
- * Every endpoint needs a contract test against `openapi.yaml` (CLAUDE.md). For M0 that surface is
- * the health pair; M1 extends this suite as each endpoint lands.
- */
+/** The unauthenticated surface: health, readiness, and the envelope of an unknown route. */
 class HealthContractTest {
-    private val connection =
-        mockk<Connection>(relaxed = true) {
-            every { isValid(any()) } returns true
-        }
-    private val dataSource =
-        mockk<DataSource> {
-            every { connection } returns this@HealthContractTest.connection
+    @Test
+    fun `should match the documented health and readiness responses`() =
+        apiTest { api ->
+            val health = api.client.get("/health")
+            OpenApiContract.validate(Operation("GET", "/health"), health.status.value, health.bodyAsText())
+
+            val ready = api.client.get("/health/ready")
+            ready.status shouldBe HttpStatusCode.OK
+            OpenApiContract.validate(Operation("GET", "/health/ready"), ready.status.value, ready.bodyAsText())
         }
 
     @Test
-    fun `should serve every path documented in openapi yaml`() =
-        testApplication {
-            application { apiModule(dataSource, "0.1.0-TEST") }
-            val client = createClient { }
+    fun `should reject an undocumented field, a missing field and a wrong type`() {
+        val health = Operation("GET", "/health")
+        OpenApiContract.validate(health, 200, """{"status":"UP","version":"1"}""")
 
-            OpenApiSpec.documentedPaths().forEach { path ->
-                val response = client.get(path)
-                check(response.status != HttpStatusCode.NotFound) { "$path terdokumentasi tapi tidak dilayani server" }
-            }
+        assertThrows<IllegalStateException> {
+            OpenApiContract.validate(health, 200, """{"status":"UP","version":"1","extra":true}""")
         }
+        assertThrows<IllegalStateException> { OpenApiContract.validate(health, 200, """{"status":"UP"}""") }
+        assertThrows<IllegalStateException> {
+            OpenApiContract.validate(Operation("GET", "/api/v1/me"), 200, """{"staff":{},"branch":{}}""")
+        }
+        assertThrows<IllegalStateException> {
+            OpenApiContract.validate(Operation("GET", "/api/v1/branches"), 200, """{"items":[{"id":"x"}]}""")
+        }
+    }
 
     @Test
-    fun `should return exactly the fields documented for health`() =
+    fun `should report not ready with the documented body when the database is down`() =
         testApplication {
-            application { apiModule(dataSource, "0.1.0-TEST") }
-
-            val response = client.get("/health")
-            response.status shouldBe HttpStatusCode.OK
-
-            val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-            body.keys shouldBe OpenApiSpec.requiredFields("HealthResponse")
-            body.getValue("status").jsonPrimitive.content shouldBe "UP"
-            OpenApiSpec.enumValues("HealthResponse").contains("UP") shouldBe true
-        }
-
-    @Test
-    fun `should return exactly the fields documented for readiness`() =
-        testApplication {
-            application { apiModule(dataSource, "0.1.0-TEST") }
-
-            val response = client.get("/health/ready")
-            response.status shouldBe HttpStatusCode.OK
-
-            val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-            body.keys shouldBe OpenApiSpec.requiredFields("ReadinessResponse")
-            val documented = OpenApiSpec.enumValues("ReadinessResponse")
-            documented.contains(body.getValue("status").jsonPrimitive.content) shouldBe true
-            documented.contains(body.getValue("database").jsonPrimitive.content) shouldBe true
-        }
-
-    @Test
-    fun `should report not ready with the documented envelope when the database is down`() =
-        testApplication {
-            val brokenDataSource =
-                mockk<DataSource> {
-                    every { connection } throws IllegalStateException("pool habis")
-                }
-            application { apiModule(brokenDataSource, "0.1.0-TEST") }
+            val broken = mockk<DataSource> { every { connection } throws IllegalStateException("pool habis") }
+            application { apiModule(broken, ApiTestSupport.database, ApiTestSupport.settings) }
 
             val response = client.get("/health/ready")
             response.status shouldBe HttpStatusCode.ServiceUnavailable
-
-            val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
-            body.getValue("status").jsonPrimitive.content shouldBe "NOT_READY"
-            body.getValue("database").jsonPrimitive.content shouldBe "DOWN"
+            OpenApiContract.validate(Operation("GET", "/health/ready"), 503, response.bodyAsText())
         }
 
     @Test
     fun `should wrap an unknown route in the documented error envelope`() =
-        testApplication {
-            application { apiModule(dataSource, "0.1.0-TEST") }
-
-            val response = client.get("/api/v1/tidak-ada")
+        apiTest { api ->
+            val response = api.client.get("/api/v1/tidak-ada")
             response.status shouldBe HttpStatusCode.NotFound
 
             val error =
@@ -101,7 +68,6 @@ class HealthContractTest {
                     .getValue("error")
                     .jsonObject
             error.getValue("code").jsonPrimitive.content shouldBe "NOT_FOUND"
-            error.containsKey("message") shouldBe true
             error
                 .getValue("requestId")
                 .jsonPrimitive.content

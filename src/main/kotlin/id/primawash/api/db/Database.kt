@@ -29,7 +29,17 @@ object DatabaseFactory {
         return HikariDataSource(hikari)
     }
 
-    fun connect(dataSource: DataSource): Database = Database.connect(dataSource)
+    /**
+     * A failed statement is never retried by Exposed: a unique violation is a business answer
+     * (PIN taken, phone already registered), and the Service decides what it means.
+     */
+    fun connect(dataSource: DataSource): Database =
+        Database.connect(
+            datasource = dataSource,
+            databaseConfig =
+                org.jetbrains.exposed.v1.core
+                    .DatabaseConfig { defaultMaxAttempts = 1 },
+        )
 
     /**
      * Applies the versioned migrations in `db/migration`. Runs at boot and from
