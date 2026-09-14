@@ -33,7 +33,7 @@ belum: seluruh endpoint bisnis — itu M1 dan seterusnya.
 
 | Milestone | Isi | Status |
 |---|---|---|
-| M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | 🔨 staging aktif — tinggal review skema |
+| M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | 🔨 staging aktif, skema direview (V2 di `development`) |
 | M1 Identitas & master data | Aktivasi perangkat, PIN login, cabang, staff, price list, loyalty, reward, customer, audit | ⬜ |
 | M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | ⬜ |
 | M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | ⬜ |

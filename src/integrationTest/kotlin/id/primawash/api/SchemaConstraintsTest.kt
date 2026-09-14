@@ -2,25 +2,15 @@ package id.primawash.api
 
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import java.sql.Connection
 import java.sql.SQLException
 
 /**
  * The schema is the M0 deliverable that everything else leans on, so the invariants that CLAUDE.md
  * says must live in the database are asserted here against a real Postgres — not in code comments.
  */
-class SchemaConstraintsTest {
-    private lateinit var fixtures: PostgresSupport.Fixtures
-
-    @BeforeEach
-    fun setUp() {
-        PostgresSupport.truncateAll()
-        fixtures = PostgresSupport.seedMinimal()
-    }
-
+class SchemaConstraintsTest : SchemaTestBase() {
     @Test
     fun `should allow only one open shift per branch`() {
         PostgresSupport.withConnection { connection ->
@@ -182,67 +172,4 @@ class SchemaConstraintsTest {
             cashier.message!! shouldContain "staff_branch_matches_role"
         }
     }
-
-    private fun openShift(connection: Connection): String =
-        connection
-            .prepareStatement(
-                "INSERT INTO shifts (branch_id, opened_by_staff_id, opened_by_name, opening_cash) " +
-                    "VALUES (?, ?, 'Siti N.', 500000) RETURNING id",
-            ).use { statement ->
-                statement.setObject(1, java.util.UUID.fromString(fixtures.branchId))
-                statement.setObject(2, java.util.UUID.fromString(fixtures.staffId))
-                statement.executeQuery().use {
-                    it.next()
-                    it.getString(1)
-                }
-            }
-
-    private fun insertStaff(
-        connection: Connection,
-        name: String,
-        active: Boolean,
-    ) {
-        connection.createStatement().use {
-            it.execute(
-                "INSERT INTO staff (name, short_name, role, branch_id, pin_lookup, pin_hash, active) " +
-                    "VALUES ('$name', 'X.', 'KASIR', '${fixtures.branchId}', repeat('a', 64), 'x', $active)",
-            )
-        }
-    }
-
-    @Suppress("LongParameterList")
-    private fun insertOrder(
-        connection: Connection,
-        shiftId: String,
-        clientTxId: String,
-        seq: Int,
-        number: String,
-        subtotal: Long = 45_000,
-        discount: Long = 0,
-        total: Long = 45_000,
-    ) {
-        connection.createStatement().use {
-            it.execute(
-                """
-                INSERT INTO orders (number, branch_id, business_date, seq, client_tx_id, customer_name,
-                                    subtotal, discount, total, loyalty_rate_id, payment, shift_id,
-                                    staff_id, captured_at)
-                VALUES ('$number', '${fixtures.branchId}', DATE '2026-08-29', $seq, '$clientTxId',
-                        'Tanpa nama', $subtotal, $discount, $total, '${fixtures.rateId}', 'TUNAI',
-                        '$shiftId', '${fixtures.staffId}', timestamptz '2026-08-29T04:24:00Z')
-                """.trimIndent(),
-            )
-        }
-    }
-
-    private fun count(
-        connection: Connection,
-        sql: String,
-    ): Int =
-        connection.createStatement().use { statement ->
-            statement.executeQuery(sql).use {
-                it.next()
-                it.getInt(1)
-            }
-        }
 }
