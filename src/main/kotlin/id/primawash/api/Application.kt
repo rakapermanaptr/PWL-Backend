@@ -13,14 +13,22 @@ import javax.sql.DataSource
 
 /**
  * Entry point referenced by `application.conf`; started through `io.ktor.server.netty.EngineMain`
- * (`./gradlew run`). Migrations run at boot so a fresh staging container is usable immediately.
+ * (`./gradlew run`).
+ *
+ * In dev the process migrates while booting. In staging/production it does not: migrations are a
+ * pre-deploy job (`bin/pwl-migrate`) run as the schema owner, so the API role never needs schema
+ * rights and two rolling instances never race for the Flyway lock.
  */
 fun Application.module() {
     val config = AppConfig.fromEnvironment()
     val dataSource = DatabaseFactory.dataSource(config.database)
-    val applied = DatabaseFactory.migrate(dataSource)
+    if (config.runMigrationsOnBoot) {
+        val applied = DatabaseFactory.migrate(dataSource)
+        log.info("Terhubung ke database ({} migrasi diterapkan saat boot)", applied)
+    } else {
+        log.info("Terhubung ke database (migrasi ditangani job pre-deploy, tidak dijalankan di sini)")
+    }
     DatabaseFactory.connect(dataSource)
-    log.info("Terhubung ke database ({} migrasi diterapkan saat boot)", applied)
 
     apiModule(dataSource, BuildInfo.VERSION)
 }

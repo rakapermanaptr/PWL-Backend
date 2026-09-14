@@ -15,7 +15,23 @@ data class DatabaseConfig(
     val user: String,
     val password: String,
     val maxPoolSize: Int,
-)
+) {
+    companion object {
+        private const val DEFAULT_POOL_SIZE = 10
+
+        /**
+         * Reads only the `DATABASE_*` variables. The migration job uses this directly, so running
+         * Flyway as `pwl_migrator` never requires `JWT_SECRET` or `PIN_PEPPER` to be present.
+         */
+        fun fromEnvironment(env: (String) -> String? = { System.getenv(it) }): DatabaseConfig =
+            DatabaseConfig(
+                url = env("DATABASE_URL") ?: "jdbc:postgresql://localhost:5432/pwl",
+                user = env("DATABASE_USER") ?: "pwl",
+                password = env("DATABASE_PASSWORD") ?: "pwl",
+                maxPoolSize = env("DATABASE_POOL_SIZE")?.toInt() ?: DEFAULT_POOL_SIZE,
+            )
+    }
+}
 
 /**
  * Runtime configuration, read from the environment.
@@ -30,11 +46,19 @@ data class AppConfig(
     val jwtSecret: String,
     val pinPepper: String,
     val minAppVersion: String,
+    /**
+     * Whether the API process applies Flyway migrations while booting.
+     *
+     * True in dev, where one role owns everything and a fresh checkout should just run. False in
+     * staging/production, where migrations are a pre-deploy job run as `pwl_migrator` — the API
+     * role has no right to change the schema, and two instances rolling out must not race each
+     * other for the Flyway lock.
+     */
+    val runMigrationsOnBoot: Boolean,
 ) {
     companion object {
         private const val DEV_JWT_SECRET = "dev-only-jwt-secret-change-me-0000000000000000"
         private const val DEV_PIN_PEPPER = "dev-only-pin-pepper-change-me-0000000000000000"
-        private const val DEFAULT_POOL_SIZE = 10
 
         fun fromEnvironment(env: (String) -> String? = { System.getenv(it) }): AppConfig {
             val environment =
@@ -46,16 +70,12 @@ data class AppConfig(
                 }
             return AppConfig(
                 environment = environment,
-                database =
-                    DatabaseConfig(
-                        url = env("DATABASE_URL") ?: "jdbc:postgresql://localhost:5432/pwl",
-                        user = env("DATABASE_USER") ?: "pwl",
-                        password = env("DATABASE_PASSWORD") ?: "pwl",
-                        maxPoolSize = env("DATABASE_POOL_SIZE")?.toInt() ?: DEFAULT_POOL_SIZE,
-                    ),
+                database = DatabaseConfig.fromEnvironment(env),
                 jwtSecret = required(env, "JWT_SECRET", environment, DEV_JWT_SECRET),
                 pinPepper = required(env, "PIN_PEPPER", environment, DEV_PIN_PEPPER),
                 minAppVersion = env("MIN_APP_VERSION") ?: "0.0.0",
+                runMigrationsOnBoot =
+                    env("RUN_MIGRATIONS_ON_BOOT")?.toBooleanStrict() ?: (environment == AppEnvironment.DEV),
             )
         }
 

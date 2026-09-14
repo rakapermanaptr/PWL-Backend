@@ -201,8 +201,21 @@ wajib diganti sebelum go-live.
 | `JWT_SECRET` | acak 256-bit | Penandatangan access token |
 | `PIN_PEPPER` | acak 256-bit | Kunci HMAC untuk `pin_lookup`. **Tidak pernah** disimpan di database |
 | `MIN_APP_VERSION` | `1.4.0` | Di bawah ini → `426 APP_UPDATE_REQUIRED` |
+| `RUN_MIGRATIONS_ON_BOOT` | `false` | Default `true` di `dev`, `false` di staging/prod — di sana migrasi adalah job pre-deploy `bin/pwl-migrate` |
 
 Semua secret dari secret manager di staging/prod. Jangan pernah masuk ke repo.
+
+### Staging (DigitalOcean App Platform)
+
+Konfigurasi staging tercatat di [`.do/app.yaml`](.do/app.yaml): region `sgp1`, service `api`
+(Dockerfile, health check `/health/ready`) dan job `PRE_DEPLOY` `migrate` yang menjalankan
+`./bin/pwl-migrate` sebagai `pwl_migrator` sebelum setiap rollout. Database adalah Managed
+PostgreSQL 16 terpisah dengan dua role — lihat [`docs/ops/database-roles.md`](docs/ops/database-roles.md).
+Secret disimpan sebagai env terenkripsi App Platform (`type: SECRET`), tidak pernah dalam teks biasa
+di repo.
+
+Push ke `main` otomatis men-deploy staging. Perubahan spec diterapkan dengan
+`doctl apps update <app-id> --spec .do/app.yaml`.
 
 Variabel `WA_*` (token Cloud API, `WA_PHONE_NUMBER_ID`, `WA_APP_SECRET`, `WA_VERIFY_TOKEN`) baru
 dibutuhkan di M5 dan didaftarkan di [seksi terakhir](#integrasi-meta--whatsapp-fase-akhir). API dan

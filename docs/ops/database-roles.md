@@ -35,7 +35,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE pwl_migrator IN SCHEMA public
 ```
 
 `DATABASE_USER` aplikasi di staging/produksi adalah `pwl_app`. Flyway dijalankan terpisah dengan
-`pwl_migrator` (job migrasi sebelum rollout), **bukan** oleh proses API. Di `dev` satu role saja
+`pwl_migrator` (job migrasi sebelum rollout, `bin/pwl-migrate`), **bukan** oleh proses API —
+di staging/prod `RUN_MIGRATIONS_ON_BOOT` bernilai `false`. Job migrasi hanya menerima variabel
+`DATABASE_*`; ia tidak memegang `JWT_SECRET` maupun `PIN_PEPPER`. Di `dev` satu role saja
 (`pwl`) sudah cukup dan migrasi ikut berjalan saat boot.
 
 ## Lapis kedua: trigger

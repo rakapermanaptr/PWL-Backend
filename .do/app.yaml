@@ -1,0 +1,84 @@
+# DigitalOcean App Platform — staging.
+#
+# Apply with:  doctl apps update <app-id> --spec .do/app.yaml
+# (first time: doctl apps create --spec .do/app.yaml)
+#
+# Secrets: values marked `type: SECRET` are never committed in plain text. Before the app exists
+# they are placeholders (CHANGE_ME) and are filled in from a local, uncommitted copy of this file.
+# After creation, `doctl apps spec get <app-id>` returns them as `EV[...]` values encrypted by
+# App Platform for this app only — those are safe to commit and keep this file applyable.
+#
+# Database: a Managed PostgreSQL 16 cluster, deliberately NOT attached as a `databases:` component.
+# Attaching lets App Platform manage the database user, while we need two roles with different
+# rights (docs/ops/database-roles.md). The app is added to the cluster's trusted sources instead.
+
+name: pwl-cashier-staging
+region: sgp1
+
+alerts:
+  - rule: DEPLOYMENT_FAILED
+  - rule: DOMAIN_FAILED
+
+services:
+  - name: api
+    github:
+      repo: rakapermanaptr/PWL-Backend
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: Dockerfile
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb-fixed
+    health_check:
+      http_path: /health/ready
+      initial_delay_seconds: 30
+      period_seconds: 15
+      timeout_seconds: 3
+      failure_threshold: 4
+    envs:
+      - key: APP_ENV
+        value: staging
+      - key: RUN_MIGRATIONS_ON_BOOT
+        value: "false"
+      - key: DATABASE_URL
+        value: CHANGE_ME
+      - key: DATABASE_USER
+        value: pwl_app
+      - key: DATABASE_PASSWORD
+        type: SECRET
+        value: CHANGE_ME
+      # Managed PG 1 GB allows ~22 connections; leave room for the migration job and psql.
+      - key: DATABASE_POOL_SIZE
+        value: "8"
+      - key: JWT_SECRET
+        type: SECRET
+        value: CHANGE_ME
+      - key: PIN_PEPPER
+        type: SECRET
+        value: CHANGE_ME
+      - key: MIN_APP_VERSION
+        value: 0.0.0
+
+jobs:
+  # Runs before every rollout. If Flyway fails, the deployment stops and the old version keeps
+  # serving — the API never boots against a half-migrated schema.
+  - name: migrate
+    kind: PRE_DEPLOY
+    github:
+      repo: rakapermanaptr/PWL-Backend
+      branch: main
+      deploy_on_push: true
+    dockerfile_path: Dockerfile
+    run_command: ./bin/pwl-migrate
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    envs:
+      - key: DATABASE_URL
+        value: CHANGE_ME
+      - key: DATABASE_USER
+        value: pwl_migrator
+      - key: DATABASE_PASSWORD
+        type: SECRET
+        value: CHANGE_ME
+      - key: DATABASE_POOL_SIZE
+        value: "2"

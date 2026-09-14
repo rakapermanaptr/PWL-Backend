@@ -87,6 +87,31 @@ val contractTestTask = tasks.register<Test>("contractTest") {
     shouldRunAfter(tasks.test)
 }
 
+/**
+ * Second start script in the distribution: `bin/pwl-migrate` runs Flyway and exits. The App
+ * Platform pre-deploy job (and any manual migration run) uses this instead of the API entrypoint,
+ * so migrations can run as the schema owner while the service runs as the restricted role.
+ */
+val migrateScripts = tasks.register<CreateStartScripts>("createMigrateScripts") {
+    applicationName = "pwl-migrate"
+    mainClass.set("id.primawash.api.db.MigrateKt")
+    // Kept out of build/scripts: the application plugin copies that whole directory into bin/.
+    outputDir = layout.buildDirectory.dir("migrate-scripts").get().asFile
+    classpath = tasks.named<Jar>("jar").get().outputs.files + configurations.runtimeClasspath.get()
+    defaultJvmOpts = listOf("-Duser.timezone=UTC")
+}
+
+distributions {
+    named("main") {
+        contents {
+            from(migrateScripts.map { listOf(it.unixScript, it.windowsScript) }) {
+                into("bin")
+                filePermissions { unix("0755") }
+            }
+        }
+    }
+}
+
 tasks.register<JavaExec>("flywayMigrate") {
     group = "database"
     description = "Runs Flyway migrations against DATABASE_URL."
