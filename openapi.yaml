@@ -1,0 +1,404 @@
+openapi: 3.1.0
+
+info:
+  title: PWL Cashier — Backend REST API Prima Wash
+  version: 1.0.0-draft
+  summary: REST API pusat untuk aplikasi kasir Android Prima Wash (Kasir Prima Laundry).
+  description: |
+    Kontrak resmi ada di `docs/PRD-Backend-REST-API.md`. Bila dokumen ini dan PRD berbeda,
+    **PRD yang menang** — perbaiki file ini di PR yang sama.
+
+    **Status M0.** Yang sudah terspesifikasi lengkap di sini baru endpoint health plus komponen
+    bersama (amplop error, header wajib, paginasi, keamanan) yang dipakai ulang semua endpoint
+    berikutnya. Permukaan API per milestone didaftar di `x-planned-endpoints`; tiap endpoint
+    dipindahkan ke `paths` pada PR yang mengimplementasikannya — sebuah PR yang mengubah permukaan
+    API wajib memperbarui berkas ini.
+
+    Konvensi (PRD §6):
+      * JSON UTF-8, field camelCase; kolom database snake_case.
+      * Waktu ISO-8601 UTC dengan milidetik (`2026-08-29T04:24:00.000Z`).
+      * Tanggal bisnis `YYYY-MM-DD` zona Asia/Jakarta, diturunkan dari `capturedAt`.
+      * Uang integer rupiah (`45000`); kuantitas desimal satu angka di belakang koma (`4.5`).
+      * `error.message` adalah kalimat Bahasa Indonesia yang ditampilkan ke kasir apa adanya.
+  contact:
+    name: Tim Backend Prima Wash
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Lokal (docker compose)
+  - url: https://staging.primawash.id
+    description: Staging — dipakai untuk shadow mode
+  - url: https://api.primawash.id
+    description: Produksi
+
+tags:
+  - name: health
+    description: Liveness & readiness untuk load balancer dan monitoring.
+  - name: auth
+    description: Aktivasi perangkat, login PIN, sesi (M1).
+  - name: master-data
+    description: Cabang, staff, price list, loyalty, reward (M1).
+  - name: customer
+    description: Customer, poin, impor CSV (M1 & M3).
+  - name: order
+    description: Order, status, sinkronisasi offline (M2).
+  - name: shift
+    description: Shift & kas (M2).
+  - name: report
+    description: Dashboard, penjualan harian, audit (M3).
+  - name: whatsapp
+    description: Outbox, kegagalan, webhook Meta (M5 — fase akhir).
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Liveness
+      description: Selalu 200 selama proses hidup. Tidak butuh autentikasi dan tidak menyentuh database.
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Proses hidup.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                status: UP
+                version: 0.1.0-SNAPSHOT
+
+  /health/ready:
+    get:
+      tags: [health]
+      summary: Readiness
+      description: |
+        Mengecek koneksi database. Dipakai deployment staging/produksi untuk menahan trafik sampai
+        migrasi selesai dan pool siap.
+      operationId: getReadiness
+      security: []
+      responses:
+        "200":
+          description: Siap menerima trafik.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              example:
+                status: READY
+                database: UP
+        "503":
+          description: Database tidak dapat dihubungi.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+              example:
+                status: NOT_READY
+                database: DOWN
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token JWT hasil `POST /auth/pin-login` (M1). Role dan cabang dibaca dari token, tidak pernah dari body.
+    deviceToken:
+      type: apiKey
+      in: header
+      name: X-Device-Token
+      description: Token perangkat hasil aktivasi (M1).
+
+  parameters:
+    DeviceId:
+      name: X-Device-Id
+      in: header
+      required: true
+      description: Identitas perangkat, wajib di setiap request (PRD §6.1).
+      schema:
+        type: string
+        format: uuid
+    AppVersion:
+      name: X-App-Version
+      in: header
+      required: true
+      description: Versi aplikasi klien. Di bawah `MIN_APP_VERSION` → `426 APP_UPDATE_REQUIRED`.
+      schema:
+        type: string
+        example: 1.4.0
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Wajib untuk semua mutasi transaksional (`POST /orders`, `/orders/sync`, `/shifts`,
+        `/shifts/{id}/cash-entries`, `/shifts/{id}/close`). Kunci sama + body sama → respons
+        tersimpan dikembalikan; body berbeda → `409 IDEMPOTENCY_MISMATCH`. Disimpan 7 hari.
+      schema:
+        type: string
+        format: uuid
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Kursor opaque dari `nextCursor` respons sebelumnya.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          enum: [UP]
+        version:
+          type: string
+
+    ReadinessResponse:
+      type: object
+      required: [status, database]
+      properties:
+        status:
+          type: string
+          enum: [READY, NOT_READY]
+        database:
+          type: string
+          enum: [UP, DOWN]
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
+    ErrorBody:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Kode error bisnis (PRD Lampiran B) atau kode transport (PRD §6.2).
+          example: SHIFT_NOT_OPEN
+        message:
+          type: string
+          description: |
+            Kalimat Bahasa Indonesia yang ditampilkan kasir apa adanya. Teksnya disalin dari
+            PRD Lampiran B — mengubah kata berarti mengubah UX, jadi butuh update PRD dan
+            pemberitahuan ke tim Android.
+          example: Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi.
+        details:
+          type: object
+          additionalProperties: true
+          description: Konteks tambahan, mis. daftar field tidak valid atau harga terbaru.
+        requestId:
+          type: string
+          example: req_01J9K3M2Q7XF4T8B
+
+    CursorPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {}
+        nextCursor:
+          type: [string, "null"]
+
+  responses:
+    ValidationError:
+      description: "400 — body tidak valid secara format."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Data yang dikirim tidak lengkap atau formatnya salah.
+              requestId: req_01J9K3M2Q7XF4T8B
+    Unauthenticated:
+      description: "401 — token tidak ada, salah, atau kedaluwarsa."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: "403 — role tidak cukup, atau kasir mengakses cabang lain (`BRANCH_SCOPE`)."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: "404 — resource tidak ada."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: NOT_FOUND
+              message: Order TBT-0829-015 tidak ditemukan.
+    Conflict:
+      description: "409 — bentrok status, versi, atau duplikat."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: STATUS_CHANGED
+              message: Status order sudah diubah dari perangkat lain.
+    BusinessRule:
+      description: "422 — aturan bisnis dilanggar (PRD Lampiran B)."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: EMPTY_CART
+              message: Belum ada layanan di order ini.
+    PinLocked:
+      description: "423 — terlalu banyak PIN salah; header `Retry-After` berisi detik."
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: PIN_LOCKED
+              message: Terlalu banyak PIN salah. Coba lagi dalam 5 menit.
+    AppUpdateRequired:
+      description: "426 — versi aplikasi terlalu lama."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    RateLimited:
+      description: "429 — melewati batas 120 request/menit per perangkat."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    InternalError:
+      description: "500 — kesalahan server; klien memperlakukannya sebagai retryable."
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            error:
+              code: INTERNAL_ERROR
+              message: Terjadi gangguan di server. Coba lagi sebentar lagi.
+              requestId: req_01J9K3M2Q7XF4T8B
+
+x-planned-endpoints:
+  description: |
+    Permukaan API v1 sesuai PRD §8, dengan milestone tempat tiap endpoint dispesifikasikan penuh di
+    `paths`. Daftar ini adalah rencana, bukan kontrak — yang mengikat hanyalah yang sudah ada di
+    `paths`.
+  M1:
+    auth:
+      - POST /api/v1/devices/activate
+      - POST /api/v1/devices/activation-codes
+      - GET /api/v1/devices
+      - DELETE /api/v1/devices/{id}
+      - GET /api/v1/login-options
+      - POST /api/v1/auth/pin-login
+      - POST /api/v1/auth/refresh
+      - POST /api/v1/auth/verify-pin
+      - POST /api/v1/auth/switch-staff
+      - POST /api/v1/auth/switch-branch
+      - POST /api/v1/auth/logout
+      - GET /api/v1/me
+    master-data:
+      - GET /api/v1/branches
+      - GET /api/v1/branches/overview
+      - PATCH /api/v1/branches/{id}
+      - GET /api/v1/staff
+      - POST /api/v1/staff
+      - POST /api/v1/staff/{id}/reset-pin
+      - PATCH /api/v1/staff/{id}
+      - GET /api/v1/services
+      - POST /api/v1/services
+      - PATCH /api/v1/services/prices
+      - PATCH /api/v1/services/{id}
+      - GET /api/v1/loyalty/rate
+      - PUT /api/v1/loyalty/rate
+      - GET /api/v1/rewards
+      - POST /api/v1/rewards
+      - PATCH /api/v1/rewards/{id}
+    customer:
+      - GET /api/v1/customers
+      - POST /api/v1/customers
+      - GET /api/v1/customers/{id}
+      - PATCH /api/v1/customers/{id}
+      - GET /api/v1/customers/{id}/points
+  M2:
+    order:
+      - POST /api/v1/orders
+      - POST /api/v1/orders/sync
+      - GET /api/v1/orders
+      - GET /api/v1/orders/{id}
+      - POST /api/v1/orders/{id}/advance
+      - GET /api/v1/orders/next-number
+    shift:
+      - GET /api/v1/shifts/current
+      - GET /api/v1/shifts/latest
+      - POST /api/v1/shifts
+      - POST /api/v1/shifts/{id}/cash-entries
+      - PUT /api/v1/shifts/{id}/counted-cash
+      - POST /api/v1/shifts/{id}/close
+      - GET /api/v1/shifts
+    sync:
+      - GET /api/v1/sync/bootstrap
+      - GET /api/v1/sync/changes
+      - POST /api/v1/devices/heartbeat
+  M3:
+    report:
+      - GET /api/v1/reports/dashboard
+      - GET /api/v1/reports/daily-sales
+      - GET /api/v1/audit
+    customer-import:
+      - GET /api/v1/customer-imports/template
+      - POST /api/v1/customer-imports
+      - POST /api/v1/customer-imports/{id}/commit
+      - GET /api/v1/customer-imports/{id}/error-report
+  M5:
+    whatsapp:
+      - GET /api/v1/wa/failures
+      - POST /api/v1/wa/failures/{id}/retry
+      - POST /api/v1/wa/failures/retry
+      - POST /api/v1/wa/failures/{id}/manual-follow-up
+      - GET /api/v1/wa/summary
+      - GET /api/v1/wa/templates
+      - GET /webhooks/whatsapp
+      - POST /webhooks/whatsapp
+
+x-not-provided:
+  - path: POST /api/v1/auth/matches-active-pin
+    reason: |
+      Helper `matchesActivePin()` klien sengaja tidak diekspos sebagai API (T3). Sebagai endpoint,
+      ia menjadi oracle untuk menebak PIN tanpa tercatat sebagai login gagal.

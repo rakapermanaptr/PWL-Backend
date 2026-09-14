@@ -1,0 +1,38 @@
+# Overrides on top of detekt's default config (buildUponDefaultConfig = true).
+build:
+  maxIssues: 0
+
+style:
+  ReturnCount:
+    max: 4
+  MagicNumber:
+    # Business constants live in named objects; seed data (PRD Lampiran D) and test data are
+    # literal by nature — a price list of named constants would be less readable, not more.
+    excludes: ['**/test/**', '**/integrationTest/**', '**/contractTest/**', '**/tools/**']
+  MaxLineLength:
+    maxLineLength: 120
+
+complexity:
+  LongMethod:
+    threshold: 80
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 12
+  TooManyFunctions:
+    thresholdInObjects: 20
+    thresholdInClasses: 20
+
+naming:
+  # File names follow the package layout prescribed by CLAUDE.md (Application.kt, Database.kt,
+  # XxxRoutes/Service/Repository/Dto), not the name of their single declaration.
+  MatchingDeclarationName:
+    active: false
+  FunctionNaming:
+    # Tests are named as sentences: `should reject order when no shift is open`()
+    excludes: ['**/test/**', '**/integrationTest/**', '**/contractTest/**']
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false
+  SwallowedException:
+    active: false

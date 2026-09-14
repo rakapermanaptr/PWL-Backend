@@ -1,0 +1,21 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.kotlin/
+
+# Local config & secrets — never commit real credentials
+.env
+.env.local
+*.pem
+
+# OS
+.DS_Store
+
+# Logs & reports
+logs/
+*.log
