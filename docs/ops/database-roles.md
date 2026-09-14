@@ -9,30 +9,43 @@ Migrasi dijalankan oleh **pemilik skema**, aplikasi berjalan sebagai role terbat
 yang membuat `audit_log` benar-benar append-only: aplikasi tidak punya hak `UPDATE`/`DELETE` di sana
 sama sekali, bukan sekadar tidak pernah memanggilnya.
 
+Urutannya penting: `REVOKE` pada `audit_log` baru bisa dijalankan setelah tabelnya dibuat migrasi.
+
 ```sql
--- Dijalankan sekali per environment oleh DBA/owner skema.
+-- 1. Sebagai admin cluster (di DigitalOcean: doadmin), terhadap database bawaan (defaultdb).
 CREATE ROLE pwl_migrator LOGIN PASSWORD '<dari secret manager>';
 CREATE ROLE pwl_app      LOGIN PASSWORD '<dari secret manager>';
+-- PG16: admin harus anggota role ini untuk membuat database atas nama role tersebut.
+GRANT pwl_migrator TO doadmin;
+CREATE DATABASE pwl OWNER pwl_migrator;
+REVOKE ALL ON DATABASE pwl FROM PUBLIC;
+GRANT CONNECT, TEMPORARY ON DATABASE pwl TO pwl_app;
 
-ALTER DATABASE pwl OWNER TO pwl_migrator;
+-- 2. Masih sebagai admin, terhadap database pwl — sebelum migrasi pertama.
 GRANT USAGE ON SCHEMA public TO pwl_app;
-
--- Hak dasar aplikasi
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO pwl_app;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO pwl_app;
-
--- Jejak audit: hanya boleh ditambah dan dibaca.
-REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM pwl_app;
-
--- Riwayat rate loyalty: baris baru saja, tidak pernah diubah (P0 #6).
-REVOKE UPDATE, DELETE, TRUNCATE ON loyalty_rates FROM pwl_app;
-
--- Tabel yang dibuat migrasi berikutnya mengikuti pola yang sama.
 ALTER DEFAULT PRIVILEGES FOR ROLE pwl_migrator IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pwl_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE pwl_migrator IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO pwl_app;
 ```
+
+3. Jalankan migrasi sebagai `pwl_migrator` (`./gradlew flywayMigrate` dengan `DATABASE_USER=pwl_migrator`).
+
+```sql
+-- 4. Sebagai pwl_migrator, terhadap pwl — setelah V1 diterapkan.
+-- Jejak audit: hanya boleh ditambah dan dibaca.
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM pwl_app;
+-- Riwayat rate loyalty: baris baru saja, tidak pernah diubah (P0 #6).
+REVOKE UPDATE, DELETE, TRUNCATE ON loyalty_rates FROM pwl_app;
+-- Riwayat Flyway milik migrator; aplikasi hanya membaca.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON flyway_schema_history FROM pwl_app;
+```
+
+Tabel yang dibuat migrasi berikutnya otomatis mendapat hak dasar lewat `ALTER DEFAULT PRIVILEGES`.
+Kalau migrasi baru menambah tabel yang juga append-only, `REVOKE`-nya ditulis di migrasi itu sendiri.
+
+Cek cepat setelah setup, login sebagai `pwl_app`: `UPDATE audit_log …`, `DELETE FROM loyalty_rates …`,
+dan `CREATE TABLE …` harus gagal dengan `permission denied`; `UPDATE branches …` harus berhasil.
 
 `DATABASE_USER` aplikasi di staging/produksi adalah `pwl_app`. Flyway dijalankan terpisah dengan
 `pwl_migrator` (job migrasi sebelum rollout, `bin/pwl-migrate`), **bukan** oleh proses API —

@@ -3,10 +3,13 @@
 # Apply with:  doctl apps update <app-id> --spec .do/app.yaml
 # (first time: doctl apps create --spec .do/app.yaml)
 #
-# Secrets: values marked `type: SECRET` are never committed in plain text. Before the app exists
-# they are placeholders (CHANGE_ME) and are filled in from a local, uncommitted copy of this file.
-# After creation, `doctl apps spec get <app-id>` returns them as `EV[...]` values encrypted by
-# App Platform for this app only — those are safe to commit and keep this file applyable.
+# App: 37909820-9c51-4831-a478-c1d235dccca9 — https://pwl-cashier-staging-rvz75.ondigitalocean.app
+#
+# Secrets: values marked `type: SECRET` are `EV[...]` ciphertexts that App Platform encrypted for
+# this app only; they are safe to commit and keep this file applyable. To rotate one, replace the
+# value with the new plain text in a local uncommitted copy, apply it, then commit the new `EV[...]`
+# from `doctl apps spec get <app-id>`. Never commit a plain-text secret. Secrets are RUN_TIME only
+# so they never reach the Docker build.
 #
 # Database: a Managed PostgreSQL 16 cluster, deliberately NOT attached as a `databases:` component.
 # Attaching lets App Platform manage the database user, while we need two roles with different
@@ -41,21 +44,24 @@ services:
       - key: RUN_MIGRATIONS_ON_BOOT
         value: "false"
       - key: DATABASE_URL
-        value: CHANGE_ME
+        value: jdbc:postgresql://pwl-staging-db-do-user-35407037-0.d.db.ondigitalocean.com:25060/pwl?sslmode=require
       - key: DATABASE_USER
         value: pwl_app
       - key: DATABASE_PASSWORD
         type: SECRET
-        value: CHANGE_ME
+        scope: RUN_TIME
+        value: EV[1:O0MxTg5bwlWpQ8dsf0KpyypuKaGn1A37:Q7FcOOYeW4RpG77CGM03Y8SEmRoJ5CGUolQhxohN/feTZbSrPgWdnm0x+HgkSbMD2TqjSlXdkj/Av3+dQEkG8e3eZR34M3kMexgvXrHX5BU=]
       # Managed PG 1 GB allows ~22 connections; leave room for the migration job and psql.
       - key: DATABASE_POOL_SIZE
         value: "8"
       - key: JWT_SECRET
         type: SECRET
-        value: CHANGE_ME
+        scope: RUN_TIME
+        value: EV[1:ZjE5G1PpjPRs3VWlFnI8/0lHxOeo8XXf:K/rPG9xSf1PCzHccaIubbPytCVXFnebh78HvyvgZHp0magf1hVNpCKjMEcpLu0FUo99mhMyKdjQCW93T/C7jatY3+AM74dvelLnAvc5hBYU=]
       - key: PIN_PEPPER
         type: SECRET
-        value: CHANGE_ME
+        scope: RUN_TIME
+        value: EV[1:Hm3Ta4gdkzb6kAYvq2v4mBPW6P+qKlbo:gpgU/u7QNEay3NegtOnBesSpKtnwRUMyZKbjGqd4pzegrhrOtBMqaPD3h+foJjjoW5nM1F7AbUs70+PLcA/12NotLyH47N+9Dhx8NMzLERk=]
       - key: MIN_APP_VERSION
         value: 0.0.0
 
@@ -74,11 +80,12 @@ jobs:
     instance_size_slug: apps-s-1vcpu-0.5gb
     envs:
       - key: DATABASE_URL
-        value: CHANGE_ME
+        value: jdbc:postgresql://pwl-staging-db-do-user-35407037-0.d.db.ondigitalocean.com:25060/pwl?sslmode=require
       - key: DATABASE_USER
         value: pwl_migrator
       - key: DATABASE_PASSWORD
         type: SECRET
-        value: CHANGE_ME
+        scope: RUN_TIME
+        value: EV[1:4tujKW4WUcK5K2XxFLDeN7y2w37OP6ig:4AviXtXyGbd+FFAy5+nacQSLoMU3Tq7+xOft9mD4+t1UC1nCd+lk7AorNrUMpSJRbGCLWdd9BPXvBCAkm6ne/EsaWhvSWX4mtRI/cAlBXbM=]
       - key: DATABASE_POOL_SIZE
         value: "2"

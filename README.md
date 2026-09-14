@@ -17,8 +17,9 @@ offline**.
 
 **M0 berjalan — fondasi sudah bisa dijalankan.** Yang sudah ada: project Gradle/Ktor (JVM 21),
 skema lengkap `V1__init.sql` + Flyway, seed pilot, endpoint health, amplop error terpusat, CI
-GitHub Actions, image Docker, dan draft `openapi.yaml`. Yang belum: seluruh endpoint bisnis — itu
-M1 dan seterusnya.
+GitHub Actions, image Docker, draft `openapi.yaml`, dan staging di
+<https://pwl-cashier-staging-rvz75.ondigitalocean.app> (baru `/health` dan `/health/ready`). Yang
+belum: seluruh endpoint bisnis — itu M1 dan seterusnya.
 
 | Sudah jalan di M0 | Perintah |
 |---|---|
@@ -32,7 +33,7 @@ M1 dan seterusnya.
 
 | Milestone | Isi | Status |
 |---|---|---|
-| M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI | 🔨 berjalan — tinggal staging |
+| M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | 🔨 staging aktif — tinggal review skema |
 | M1 Identitas & master data | Aktivasi perangkat, PIN login, cabang, staff, price list, loyalty, reward, customer, audit | ⬜ |
 | M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | ⬜ |
 | M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | ⬜ |
@@ -216,6 +217,22 @@ di repo.
 
 Push ke `main` otomatis men-deploy staging. Perubahan spec diterapkan dengan
 `doctl apps update <app-id> --spec .do/app.yaml`.
+
+| Hal | Nilai |
+|---|---|
+| URL | <https://pwl-cashier-staging-rvz75.ondigitalocean.app> |
+| App | `pwl-cashier-staging` (`37909820-9c51-4831-a478-c1d235dccca9`), `sgp1` |
+| Database | `pwl-staging-db` (PostgreSQL 16, `db-s-1vcpu-1gb`), database `pwl` |
+| Akses database | Trusted source hanya app ini. Untuk `psql`/`seedPilot` dari laptop, tambahkan IP sementara lalu hapus lagi |
+
+Tanpa IP laptop di trusted source, `seedPilot` dan `flywayMigrate` ke staging ditolak — itu disengaja:
+
+```bash
+doctl databases firewalls append <cluster-id> --rule ip_addr:$(curl -s https://api.ipify.org)
+# … jalankan pekerjaan …
+doctl databases firewalls list <cluster-id>            # ambil UUID rule IP tadi
+doctl databases firewalls remove <cluster-id> --uuid <uuid>
+```
 
 Variabel `WA_*` (token Cloud API, `WA_PHONE_NUMBER_ID`, `WA_APP_SECRET`, `WA_VERIFY_TOKEN`) baru
 dibutuhkan di M5 dan didaftarkan di [seksi terakhir](#integrasi-meta--whatsapp-fase-akhir). API dan
