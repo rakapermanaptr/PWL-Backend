@@ -70,7 +70,7 @@ class CatalogAndCustomerFlowTest {
             val siti =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Tebet 1", "TBT"),
+                        ApiTestSupport.newDevice(),
                         "TBT",
                         "1234",
                     ).string("accessToken")
@@ -125,14 +125,14 @@ class CatalogAndCustomerFlowTest {
             val siti =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Tebet 1", "TBT"),
+                        ApiTestSupport.newDevice(),
                         "TBT",
                         "1234",
                     ).string("accessToken")
             val nia =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Bintaro 1", "BTR"),
+                        ApiTestSupport.newDevice(),
                         "BTR",
                         "2468",
                     ).string("accessToken")
@@ -166,7 +166,7 @@ class CatalogAndCustomerFlowTest {
             val siti =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Tebet 1", "TBT"),
+                        ApiTestSupport.newDevice(),
                         "TBT",
                         "1234",
                     ).string("accessToken")
@@ -202,7 +202,7 @@ class CatalogAndCustomerFlowTest {
             val siti =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Tebet 1", "TBT"),
+                        ApiTestSupport.newDevice(),
                         "TBT",
                         "1234",
                     ).string("accessToken")

@@ -96,7 +96,7 @@ class AuthService(
             val member = staff.find(session.staffId)?.takeIf { it.active } ?: throw sessionEnded()
             val device =
                 devices.find(session.deviceId)?.takeIf { it.revokedAt == null }
-                    ?: throw DeviceService.deviceUnauthorized()
+                    ?: throw DeviceService.deviceBlocked()
             val branch = session.branchId?.let { branches.find(it) } ?: throw sessionEnded()
             if (session.staffId != claims.staffId || device.id != claims.deviceId || branch.id != claims.branchId) {
                 throw sessionEnded()
@@ -114,28 +114,37 @@ class AuthService(
         }
     }
 
-    /** `GET /login-options`: branches, active cashier short names and shift state — never PIN data. */
-    suspend fun loginOptions(device: DevicePrincipal): LoginOptions =
+    /**
+     * `GET /login-options` (public — the first screen of a fresh install): branches, active cashier short
+     * names and shift state, never PIN data. [deviceId] is optional and only preselects the branch this
+     * tablet last logged in at.
+     */
+    suspend fun loginOptions(deviceId: UUID?): LoginOptions =
         tx {
             val names = staff.activeCashierNamesInTx()
             val shifts = branches.latestShifts()
             LoginOptions(
-                lastBranchId = devices.find(device.deviceId)?.lastBranchId,
+                lastBranchId = deviceId?.let { devices.find(it)?.lastBranchId },
                 branches = branches.findAll().map { LoginOption(it, names[it.id].orEmpty(), shifts[it.id]) },
             )
         }
 
     /**
      * `POST /auth/pin-login` (PRD §8.1, order of `LoginWithPinUseCase`): branch exists → branch active →
-     * PIN format → device not locked → PIN matches an account → account not locked → account active →
-     * a cashier logs in at their own branch only. Every rejection from the PIN check onward is audited
-     * as `LOGIN_FAILED` and counts toward the per-device limit (5 in 5 minutes → locked 5 minutes).
+     * PIN format → tablet not blocked or locked → PIN matches an account → account not locked → account
+     * active → a cashier logs in at their own branch only. Every rejection from the PIN check onward is
+     * audited as `LOGIN_FAILED` and counts toward the per-device limit (5 in 5 minutes → locked 5 minutes).
+     *
+     * Public, without an activation step (owner decision, see `docs/prd-gaps-m1.md`): [deviceId] is the
+     * installation id the app generates, and the tablet is recorded on its first attempt.
      *
      * Success: `last_login_at`, a new session (any other session on this tablet ends — one device, one
-     * staff), `devices.last_branch_id`, and a `LOGIN` audit row, all in one transaction.
+     * staff), the tablet's branch and name, a `LOGIN` audit row and — on a tablet's first login —
+     * `DEVICE_ACTIVATED`, all in one transaction.
      */
     suspend fun pinLogin(
-        device: DevicePrincipal,
+        deviceId: UUID,
+        appVersion: String?,
         branchId: UUID?,
         pin: String?,
     ): IssuedSession =
@@ -164,58 +173,88 @@ class AuthService(
                 )
             }
             val now = clock.instant()
-            val tablet = requireNotNull(devices.lockForPinAttempt(device.deviceId))
+            val tablet =
+                devices.registerForPinAttempt(deviceId, appVersion)
+                    ?: return@decide reject(DeviceService.deviceBlocked())
             tablet.pinLockedUntil?.takeIf { it.isAfter(now) }?.let { return@decide reject(pinLocked(now, it)) }
 
             val candidates = staff.findByPin(pin).filter { staff.verifyPin(pin, it) }
             val matched = candidates.firstOrNull { it.active } ?: candidates.firstOrNull()
             matched?.pinLockedUntil?.takeIf { it.isAfter(now) }?.let { return@decide reject(pinLocked(now, it)) }
 
-            val failure =
-                when {
-                    matched == null ->
-                        BusinessRuleException(
-                            ErrorCodes.PIN_UNKNOWN,
-                            "PIN tidak dikenali. Coba lagi atau minta owner reset PIN.",
-                            clearPin(true),
-                        )
-                    !matched.active ->
-                        BusinessRuleException(
-                            ErrorCodes.STAFF_INACTIVE,
-                            "Akun ${matched.name} nonaktif — PIN lama sudah diblokir.",
-                            clearPin(true),
-                        )
-                    !matched.canWorkAt(branch.id) -> wrongBranch(matched, branch, clearPin = true)
-                    else -> null
-                }
+            val failure = loginFailure(matched, branch)
             if (failure != null) {
                 recordFailedAttempt(tablet, branch, matched, failure, now)
                 return@decide reject(failure)
             }
+            accept(completeLogin(tablet, requireNotNull(matched), branch, appVersion, now))
+        }
 
-            val member = requireNotNull(matched)
-            staff.recordSuccessfulLogin(member.id, now)
-            val issued = startSession(tablet.id, member, branch, now)
-            devices.recordBranch(tablet.id, branch.id)
+    /** Why a matched PIN still may not log in here, in `LoginWithPinUseCase` order; null when it may. */
+    private fun loginFailure(
+        matched: StaffRecord?,
+        branch: BranchRecord,
+    ): DomainException? =
+        when {
+            matched == null ->
+                BusinessRuleException(
+                    ErrorCodes.PIN_UNKNOWN,
+                    "PIN tidak dikenali. Coba lagi atau minta owner reset PIN.",
+                    clearPin(true),
+                )
+            !matched.active ->
+                BusinessRuleException(
+                    ErrorCodes.STAFF_INACTIVE,
+                    "Akun ${matched.name} nonaktif — PIN lama sudah diblokir.",
+                    clearPin(true),
+                )
+            !matched.canWorkAt(branch.id) -> wrongBranch(matched, branch, clearPin = true)
+            else -> null
+        }
+
+    private fun completeLogin(
+        tablet: DeviceRecord,
+        member: StaffRecord,
+        branch: BranchRecord,
+        appVersion: String?,
+        now: Instant,
+    ): IssuedSession {
+        staff.recordSuccessfulLogin(member.id, now)
+        val issued = startSession(tablet.id, member, branch, now)
+        devices.recordLogin(tablet, branch.id, branch.name, appVersion)
+        val actor = AuditActor.staff(member.id, member.shortName, member.isOwner, tablet.id)
+        if (!tablet.hasLoggedIn) {
             audit.write(
                 AuditEntry(
                     branchId = branch.id,
-                    actor = AuditActor.staff(member.id, member.shortName, member.isOwner, tablet.id),
-                    type = AuditActionType.LOGIN,
-                    action = "Login PIN sebagai ${roleInBranch(member, branch)} di perangkat Cabang ${branch.name}",
-                    entityType = SESSION_ENTITY,
-                    entityId = issued.sessionId.toString(),
+                    actor = actor,
+                    type = AuditActionType.DEVICE_ACTIVATED,
+                    action = "Tablet baru dipakai login pertama kali di Cabang ${branch.name}",
+                    entityType = "device",
+                    entityId = tablet.id.toString(),
                 ),
             )
-            accept(issued.session)
         }
+        audit.write(
+            AuditEntry(
+                branchId = branch.id,
+                actor = actor,
+                type = AuditActionType.LOGIN,
+                action = "Login PIN sebagai ${roleInBranch(member, branch)} di perangkat Cabang ${branch.name}",
+                entityType = SESSION_ENTITY,
+                entityId = issued.sessionId.toString(),
+            ),
+        )
+        return issued.session
+    }
 
     /**
      * `POST /auth/refresh`: rotates the refresh token (the old one stops working) and issues a new
-     * access token. The session keeps its original 18-hour expiry — rotation never extends it.
+     * access token. The session keeps its original 18-hour expiry — rotation never extends it. The token
+     * only works from the tablet it was issued to, and not once that tablet is blocked.
      */
     suspend fun refresh(
-        device: DevicePrincipal,
+        deviceId: UUID,
         refreshToken: String?,
     ): IssuedSession =
         tx {
@@ -224,14 +263,15 @@ class AuthService(
                 refreshToken
                     ?.takeIf { it.startsWith(REFRESH_PREFIX) }
                     ?.let { repository.findSessionByRefreshHash(SecureTokens.sha256Hex(it)) }
-                    ?.takeIf { it.isLive(now) && it.deviceId == device.deviceId }
+                    ?.takeIf { it.isLive(now) && it.deviceId == deviceId }
                     ?: throw sessionEnded()
+            if (devices.find(deviceId)?.revokedAt != null) throw DeviceService.deviceBlocked()
             val member = staff.find(session.staffId)?.takeIf { it.active } ?: throw sessionEnded()
             val branch = session.branchId?.let { branches.find(it) } ?: throw sessionEnded()
             val newRefresh = tokens.newToken(REFRESH_PREFIX)
             repository.rotateRefreshToken(session.id, SecureTokens.sha256Hex(newRefresh), now)
             IssuedSession(
-                accessToken = accessToken(session.id, member, branch, device.deviceId),
+                accessToken = accessToken(session.id, member, branch, deviceId),
                 accessTokenExpiresIn = AccessTokens.TTL.seconds,
                 refreshToken = newRefresh,
                 refreshTokenExpiresIn = Duration.between(now, session.expiresAt).seconds,
@@ -331,7 +371,12 @@ class AuthService(
             val now = clock.instant()
             repository.revokeSession(principal.sessionId, now)
             val issued = startSession(principal.deviceId, member, target, now)
-            devices.recordBranch(principal.deviceId, target.id)
+            devices.recordLogin(
+                requireNotNull(devices.find(principal.deviceId)),
+                target.id,
+                target.name,
+                appVersion = null,
+            )
             audit.write(
                 AuditEntry(
                     branchId = target.id,
@@ -397,7 +442,7 @@ class AuthService(
         if (invalid != null || member == null || pin == null) return reject(requireNotNull(invalid))
 
         val now = clock.instant()
-        val tablet = requireNotNull(devices.lockForPinAttempt(principal.deviceId))
+        val tablet = devices.registerForPinAttempt(principal.deviceId, null) ?: throw DeviceService.deviceBlocked()
         val lockedUntil =
             listOfNotNull(
                 tablet.pinLockedUntil,

@@ -79,7 +79,7 @@ private fun featureModule(): Module =
         single { BranchService(get(), get(), get()) }
         single { SessionService(get(), get()) }
         single { StaffService(get(), get(), get(), get(), get(), get(), get()) }
-        single { DeviceService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { DeviceService(get(), get(), get(), get(), get()) }
         single { AuthService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CatalogService(get(), get(), get(), get()) }
         single { CustomerService(get(), get(), get(), get()) }

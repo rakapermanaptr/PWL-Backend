@@ -1,13 +1,13 @@
 package id.primawash.api.device
 
 import id.primawash.api.common.Timestamps
-import id.primawash.api.db.DeviceActivationCodesTable
 import id.primawash.api.db.DevicesTable
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.isNotNull
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
-import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import java.time.Instant
@@ -19,27 +19,23 @@ data class DeviceRecord(
     val platform: String,
     val appVersion: String,
     val lastBranchId: UUID?,
-    val activatedBy: UUID?,
     val activatedAt: Instant,
     val lastSeenAt: Instant?,
     val pendingCount: Int,
     val revokedAt: Instant?,
     val pinLockedUntil: Instant?,
-)
+) {
+    /** A device that has never completed a PIN login has no branch yet. */
+    val hasLoggedIn: Boolean get() = lastBranchId != null
+}
 
-data class ActivationCodeRecord(
-    val id: UUID,
-    val createdBy: UUID,
-    val branchId: UUID?,
-    val expiresAt: Instant,
-    val usedAt: Instant?,
-)
-
-/** Exposed queries for `devices` and `device_activation_codes`. Only token/code hashes are stored. */
+/** Exposed queries for `devices`. A device is identified by the installation id the app generates. */
 class DeviceRepository {
-    fun findAll(): List<DeviceRecord> =
+    /** Devices that have completed at least one PIN login — attempts alone never list a tablet. */
+    fun findLoggedIn(): List<DeviceRecord> =
         DevicesTable
             .selectAll()
+            .where { DevicesTable.lastBranchId.isNotNull() }
             .orderBy(DevicesTable.activatedAt to SortOrder.DESC)
             .map { it.toDevice() }
 
@@ -54,31 +50,17 @@ class DeviceRepository {
             .firstOrNull()
             ?.toDevice()
 
-    fun findByTokenHash(hash: String): DeviceRecord? =
-        DevicesTable
-            .selectAll()
-            .where { DevicesTable.tokenHash eq hash }
-            .firstOrNull()
-            ?.toDevice()
-
-    @Suppress("LongParameterList")
-    fun insert(
+    /** Records the installation the first time it is seen; an existing row is left untouched. */
+    fun insertIfAbsent(
         id: UUID,
-        name: String,
         appVersion: String,
-        branchId: UUID?,
-        tokenHash: String,
-        activatedBy: UUID,
         at: Instant,
     ) {
-        DevicesTable.insert {
+        DevicesTable.insertIgnore {
             it[DevicesTable.id] = id
-            it[DevicesTable.name] = name
+            it[name] = "Tablet"
             it[platform] = "ANDROID"
             it[DevicesTable.appVersion] = appVersion
-            it[lastBranchId] = branchId
-            it[DevicesTable.tokenHash] = tokenHash
-            it[DevicesTable.activatedBy] = activatedBy
             it[activatedAt] = Timestamps.toDb(at)
             it[lastSeenAt] = Timestamps.toDb(at)
         }
@@ -91,13 +73,17 @@ class DeviceRepository {
         DevicesTable.update({ DevicesTable.id eq id }) { it[revokedAt] = Timestamps.toDb(at) }
     }
 
-    fun updateLastBranch(
+    fun recordLogin(
         id: UUID,
         branchId: UUID,
+        name: String,
+        appVersion: String?,
         at: Instant,
     ) {
         DevicesTable.update({ DevicesTable.id eq id }) {
             it[lastBranchId] = branchId
+            it[DevicesTable.name] = name
+            if (appVersion != null) it[DevicesTable.appVersion] = appVersion
             it[lastSeenAt] = Timestamps.toDb(at)
         }
     }
@@ -109,51 +95,6 @@ class DeviceRepository {
         DevicesTable.update({ DevicesTable.id eq id }) { it[pinLockedUntil] = lockedUntil?.let(Timestamps::toDb) }
     }
 
-    fun insertActivationCode(
-        codeHash: String,
-        createdBy: UUID,
-        branchId: UUID?,
-        at: Instant,
-        expiresAt: Instant,
-    ) {
-        DeviceActivationCodesTable.insert {
-            it[id] = UUID.randomUUID()
-            it[DeviceActivationCodesTable.codeHash] = codeHash
-            it[DeviceActivationCodesTable.createdBy] = createdBy
-            it[DeviceActivationCodesTable.branchId] = branchId
-            it[createdAt] = Timestamps.toDb(at)
-            it[DeviceActivationCodesTable.expiresAt] = Timestamps.toDb(expiresAt)
-        }
-    }
-
-    /** Locks the code row so two tablets typing the same code cannot both redeem it. */
-    fun findActivationCodeForUpdate(codeHash: String): ActivationCodeRecord? =
-        DeviceActivationCodesTable
-            .selectAll()
-            .where { DeviceActivationCodesTable.codeHash eq codeHash }
-            .forUpdate(ForUpdateOption.ForUpdate)
-            .firstOrNull()
-            ?.let {
-                ActivationCodeRecord(
-                    id = it[DeviceActivationCodesTable.id],
-                    createdBy = it[DeviceActivationCodesTable.createdBy],
-                    branchId = it[DeviceActivationCodesTable.branchId],
-                    expiresAt = Timestamps.fromDb(it[DeviceActivationCodesTable.expiresAt]),
-                    usedAt = it[DeviceActivationCodesTable.usedAt]?.let(Timestamps::fromDb),
-                )
-            }
-
-    fun markActivationCodeUsed(
-        id: UUID,
-        deviceId: UUID,
-        at: Instant,
-    ) {
-        DeviceActivationCodesTable.update({ DeviceActivationCodesTable.id eq id }) {
-            it[usedAt] = Timestamps.toDb(at)
-            it[usedByDevice] = deviceId
-        }
-    }
-
     private fun ResultRow.toDevice() =
         DeviceRecord(
             id = this[DevicesTable.id],
@@ -161,7 +102,6 @@ class DeviceRepository {
             platform = this[DevicesTable.platform],
             appVersion = this[DevicesTable.appVersion],
             lastBranchId = this[DevicesTable.lastBranchId],
-            activatedBy = this[DevicesTable.activatedBy],
             activatedAt = Timestamps.fromDb(this[DevicesTable.activatedAt]),
             lastSeenAt = this[DevicesTable.lastSeenAt]?.let(Timestamps::fromDb),
             pendingCount = this[DevicesTable.pendingCount],

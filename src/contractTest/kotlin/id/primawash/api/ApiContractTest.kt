@@ -53,48 +53,39 @@ class ApiContractTest {
             api.client.get("/health").conformsTo("GET", "/health", HttpStatusCode.OK)
             api.client.get("/health/ready").conformsTo("GET", "/health/ready", HttpStatusCode.OK)
 
-            // ---- Owner: tablet, login, devices ----------------------------------------------
-            val ownerDevice = ApiTestSupport.registerDevice("Tablet Owner", "TBT")
-            api.get("/login-options", ownerDevice).conformsTo("GET", "/api/v1/login-options", HttpStatusCode.OK)
-            api.get("/login-options").conformsTo("GET", "/api/v1/login-options", HttpStatusCode.Unauthorized)
+            // ---- Login screen and owner session ----------------------------------------------
+            val ownerDevice = ApiTestSupport.newDevice()
+            api.get("/login-options").conformsTo("GET", "/api/v1/login-options", HttpStatusCode.OK)
             val ownerLogin =
                 api
-                    .post("/auth/pin-login", """{"branchId":"$tebet","pin":"9090"}""", ownerDevice)
+                    .post("/auth/pin-login", """{"branchId":"$tebet","pin":"9090"}""", deviceId = ownerDevice)
                     .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.OK)
                     .json()
             val owner = ownerLogin.string("accessToken")
             api
-                .post("/auth/pin-login", """{"branchId":"$tebet","pin":"12"}""", ownerDevice)
+                .post("/auth/pin-login", """{"branchId":"$tebet","pin":"12"}""", deviceId = ownerDevice)
                 .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.UnprocessableEntity)
             api
-                .post("/auth/refresh", """{"refreshToken":"${ownerLogin.string("refreshToken")}"}""", ownerDevice)
-                .conformsTo("POST", "/api/v1/auth/refresh", HttpStatusCode.OK)
-            api.get("/me", owner).conformsTo("GET", "/api/v1/me", HttpStatusCode.OK)
+                .post("/auth/pin-login", """{"branchId":"$tebet","pin":"9090"}""")
+                .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.BadRequest)
+            val refreshed =
+                api
+                    .post(
+                        "/auth/refresh",
+                        """{"refreshToken":"${ownerLogin.string("refreshToken")}"}""",
+                        deviceId = ownerDevice,
+                    ).conformsTo("POST", "/api/v1/auth/refresh", HttpStatusCode.OK)
+                    .json()
+            val ownerToken = refreshed.string("accessToken")
+            api.get("/me", ownerToken).conformsTo("GET", "/api/v1/me", HttpStatusCode.OK)
             api.get("/me").conformsTo("GET", "/api/v1/me", HttpStatusCode.Unauthorized)
 
-            val code =
-                api
-                    .post("/devices/activation-codes", """{"branchId":"$bintaro"}""", owner)
-                    .conformsTo("POST", "/api/v1/devices/activation-codes", HttpStatusCode.Created)
-                    .json()
-                    .string("code")
-            val activated =
-                api
-                    .post("/devices/activate", """{"code":"$code","name":"Tablet Bintaro 1","appVersion":"1.4.0"}""")
-                    .conformsTo("POST", "/api/v1/devices/activate", HttpStatusCode.Created)
-                    .json()
+            val bintaroDevice = ApiTestSupport.newDevice()
+            api.login(bintaroDevice, "BTR", "2468")
             api
-                .post("/devices/activate", """{"code":"$code"}""")
-                .conformsTo("POST", "/api/v1/devices/activate", HttpStatusCode.UnprocessableEntity)
-            val bintaroDevice = activated.string("deviceToken")
-            val devices =
-                api
-                    .get("/devices", owner)
-                    .conformsTo("GET", "/api/v1/devices", HttpStatusCode.OK)
-                    .json()
-                    .getValue("items")
-                    .jsonArray
-            devices.size shouldBe 2
+                .get("/login-options", deviceId = bintaroDevice)
+                .conformsTo("GET", "/api/v1/login-options", HttpStatusCode.OK)
+            api.get("/devices", ownerToken).conformsTo("GET", "/api/v1/devices", HttpStatusCode.OK)
 
             // ---- Branches -------------------------------------------------------------------
             api.get("/branches", owner).conformsTo("GET", "/api/v1/branches", HttpStatusCode.OK)
@@ -179,7 +170,7 @@ class ApiContractTest {
             val siti =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Tebet 1", "TBT"),
+                        ApiTestSupport.newDevice(),
                         "TBT",
                         "1234",
                     ).string("accessToken")
@@ -239,19 +230,16 @@ class ApiContractTest {
                 .post("/auth/switch-branch", """{"branchId":"$bintaro"}""", owner)
                 .conformsTo("POST", "/api/v1/auth/switch-branch", HttpStatusCode.OK)
             api.post("/auth/logout", token = bagas).conformsTo("POST", "/api/v1/auth/logout", HttpStatusCode.OK)
-            val tabletId = devices.first { it.jsonObject.string("name") == "Tablet Bintaro 1" }.jsonObject.string("id")
             val ownerAgain = api.login(ownerDevice, "TBT", "9090").string("accessToken")
             api
-                .delete("/devices/$tabletId", ownerAgain)
+                .delete("/devices/$bintaroDevice", ownerAgain)
                 .conformsTo("DELETE", "/api/v1/devices/{id}", HttpStatusCode.OK)
             api
-                .post("/auth/refresh", """{"refreshToken":"rt_tidak-ada"}""", ownerDevice)
-                .conformsTo("POST", "/api/v1/auth/refresh", HttpStatusCode.Unauthorized)
+                .post("/auth/pin-login", """{"branchId":"$bintaro","pin":"2468"}""", deviceId = bintaroDevice)
+                .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.Unauthorized)
             api
-                .get(
-                    "/login-options",
-                    bintaroDevice,
-                ).conformsTo("GET", "/api/v1/login-options", HttpStatusCode.Unauthorized)
+                .post("/auth/refresh", """{"refreshToken":"rt_tidak-ada"}""", deviceId = ownerDevice)
+                .conformsTo("POST", "/api/v1/auth/refresh", HttpStatusCode.Unauthorized)
 
             (OpenApiContract.operations() - exercised).shouldBeEmpty()
         }

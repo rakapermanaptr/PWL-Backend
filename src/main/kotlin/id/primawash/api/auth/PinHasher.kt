@@ -33,16 +33,6 @@ class PinHasher(
         return mac.doFinal(pin.toByteArray(Charsets.UTF_8)).toHex()
     }
 
-    /**
-     * Keyed lookup for other short secrets that must not be enumerable from a database dump alone,
-     * such as the 8-character device activation code. [purpose] separates the key spaces, so an
-     * activation code can never collide with a PIN lookup.
-     */
-    fun keyedLookup(
-        purpose: String,
-        value: String,
-    ): String = lookup("$purpose:$value")
-
     /** Argon2id hash in PHC string format — the value stored in `staff.pin_hash`. */
     fun hash(pin: String): String {
         val salt = ByteArray(SALT_LENGTH).also(random::nextBytes)

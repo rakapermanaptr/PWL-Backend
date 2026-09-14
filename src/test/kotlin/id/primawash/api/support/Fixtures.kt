@@ -71,9 +71,10 @@ fun staffRecord(
 )
 
 fun deviceRecord(
-    name: String = "Tablet Tebet 1",
+    name: String = "Tablet Cabang Tebet",
     lockedUntil: Instant? = null,
-) = DeviceRecord(UUID.randomUUID(), name, "ANDROID", "1.4.0", TEBET.id, null, NOW, null, 0, null, lockedUntil)
+    lastBranchId: UUID? = TEBET.id,
+) = DeviceRecord(UUID.randomUUID(), name, "ANDROID", "1.4.0", lastBranchId, NOW, null, 0, null, lockedUntil)
 
 val OWNER_ACTOR = AuditActor(UUID.randomUUID(), "Raka (owner)", UUID.randomUUID())
 

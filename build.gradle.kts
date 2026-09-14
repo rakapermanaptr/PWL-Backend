@@ -106,23 +106,10 @@ val migrateScripts = tasks.register<CreateStartScripts>("createMigrateScripts") 
     defaultJvmOpts = listOf("-Duser.timezone=UTC")
 }
 
-/** `bin/pwl-activation-code <BRANCH>`: activation code for the first tablet, run inside the API container. */
-val activationCodeScripts = tasks.register<CreateStartScripts>("createActivationCodeScripts") {
-    applicationName = "pwl-activation-code"
-    mainClass.set("id.primawash.api.tools.IssueActivationCodeKt")
-    outputDir = layout.buildDirectory.dir("activation-code-scripts").get().asFile
-    classpath = tasks.named<Jar>("jar").get().outputs.files + configurations.runtimeClasspath.get()
-    defaultJvmOpts = listOf("-Duser.timezone=UTC")
-}
-
 distributions {
     named("main") {
         contents {
             from(migrateScripts.map { listOf(it.unixScript, it.windowsScript) }) {
-                into("bin")
-                filePermissions { unix("0755") }
-            }
-            from(activationCodeScripts.map { listOf(it.unixScript, it.windowsScript) }) {
                 into("bin")
                 filePermissions { unix("0755") }
             }
@@ -135,14 +122,6 @@ tasks.register<JavaExec>("flywayMigrate") {
     description = "Runs Flyway migrations against DATABASE_URL."
     mainClass.set("id.primawash.api.db.MigrateKt")
     classpath = sourceSets.main.get().runtimeClasspath
-}
-
-tasks.register<JavaExec>("issueActivationCode") {
-    group = "database"
-    description = "Prints a device activation code for the first tablet. Optional: -Pbranch=TBT."
-    mainClass.set("id.primawash.api.tools.IssueActivationCodeKt")
-    classpath = sourceSets.main.get().runtimeClasspath
-    args = listOfNotNull(project.findProperty("branch")?.toString())
 }
 
 tasks.register<JavaExec>("seedPilot") {

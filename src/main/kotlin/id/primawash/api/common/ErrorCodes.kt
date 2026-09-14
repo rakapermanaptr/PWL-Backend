@@ -30,7 +30,6 @@ object ErrorCodes {
 
     // M1 additions — not in Lampiran B yet; recorded in docs/prd-gaps-m1.md for the PRD and Android.
     const val DEVICE_UNAUTHORIZED = "DEVICE_UNAUTHORIZED"
-    const val ACTIVATION_CODE_INVALID = "ACTIVATION_CODE_INVALID"
     const val STAFF_REQUIRED = "STAFF_REQUIRED"
 
     // PIN & staff

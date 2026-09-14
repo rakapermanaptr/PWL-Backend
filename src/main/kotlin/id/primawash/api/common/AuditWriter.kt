@@ -44,9 +44,6 @@ enum class AuditActionType {
     WA_RESENT,
     WA_MANUAL_FOLLOW_UP,
 
-    /** M1 addition — an owner issued a device activation code (not in Lampiran C yet). */
-    DEVICE_ACTIVATION_CODE_CREATED,
-
     /** M1 addition — name or WhatsApp opt-in changed through `PATCH /customers/{id}`. */
     CUSTOMER_UPDATED,
 }

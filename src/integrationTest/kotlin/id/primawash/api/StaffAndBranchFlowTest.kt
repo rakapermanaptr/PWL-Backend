@@ -85,7 +85,7 @@ class StaffAndBranchFlowTest {
             val bagas =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Tebet 2", "TBT"),
+                        ApiTestSupport.newDevice(),
                         "TBT",
                         "5678",
                     ).string("accessToken")
@@ -102,7 +102,7 @@ class StaffAndBranchFlowTest {
             val siti =
                 api
                     .login(
-                        ApiTestSupport.registerDevice("Tablet Tebet 1", "TBT"),
+                        ApiTestSupport.newDevice(),
                         "TBT",
                         "1234",
                     ).string("accessToken")
@@ -150,9 +150,8 @@ class StaffAndBranchFlowTest {
 
             api.patch("/branches/${ApiTestSupport.branchId("CPT")}", """{"active":false}""", owner).status shouldBe
                 HttpStatusCode.OK
-            val device = ApiTestSupport.registerDevice("Tablet Cipete", "CPT")
             api
-                .post("/auth/pin-login", """{"branchId":"${ApiTestSupport.branchId("CPT")}","pin":"3690"}""", device)
+                .pinLogin(ApiTestSupport.newDevice(), "CPT", "3690")
                 .shouldFailWith(HttpStatusCode.UnprocessableEntity, "BRANCH_INACTIVE")
         }
 

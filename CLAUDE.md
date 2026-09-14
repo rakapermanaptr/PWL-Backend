@@ -43,7 +43,7 @@ src/main/kotlin/id/primawash/api/
                          Idempotency, Pagination, AuditWriter
   db/                 -> Database.kt (Hikari + Exposed), Tables.kt, tx helpers
   auth/ device/ branch/ staff/ catalog/ customer/ order/ shift/ wa/ report/ sync/
-  tools/              -> CLI entry points: SeedPilot, IssueActivationCode
+  tools/              -> CLI entry points: SeedPilot
 src/main/resources/db/migration/   -> V1__init.sql, V2__…
 ```
 
@@ -138,13 +138,18 @@ Every error uses one envelope, produced centrally in `StatusPages`:
 - PIN space is 4–6 digits — small enough to brute-force offline, so the
   protection is layered: `pin_lookup = HMAC-SHA256(PIN_PEPPER, pin)` for
   lookup (pepper lives in the secret manager, **never in the database**),
-  `pin_hash = Argon2id(pin)` for verification, plus rate limiting and device
-  binding.
+  `pin_hash = Argon2id(pin)` for verification, plus rate limiting.
+- **No device activation** (owner decision, 14 Sep 2026 — `docs/prd-gaps-m1.md`
+  §0, overrides PRD §12.1): the login screen is public, "pick branch → PIN".
+  The app sends a self-generated installation UUID as `X-Device-Id`; it keys
+  the per-tablet PIN lock, one session per tablet, and owner blocking. Do not
+  reintroduce a user-visible activation step without the owner's approval.
 - **Never log a PIN**, in any form, at any level. Redact bodies for `/auth/*`
   and `/staff*`.
 - Rate limits: 5 wrong PINs per device in 5 min → `423` for 5 min; 5 consecutive
-  wrong PINs per account → 15 min lock + audit. Every failed login is audited
-  (without the PIN). General limit: 120 req/min per device.
+  wrong PINs per account → 15 min lock + audit; 20 PIN login attempts per
+  network address in 5 min → `429`. Every failed login is audited (without the
+  PIN). General limit: 120 req/min per device.
 - **Do not add a "does this PIN belong to an active account?" endpoint.** The
   client's `matchesActivePin()` auto-submit helper must stay client-side; as an
   API it is a PIN-guessing oracle that bypasses failed-login accounting.
@@ -263,7 +268,6 @@ touching a related area, check the PRD section named here.
 ./gradlew run -Pworker        # WhatsApp worker + scheduler (final phase only)
 ./gradlew flywayMigrate
 ./gradlew seedPilot           # dev/staging only
-./gradlew issueActivationCode -Pbranch=TBT   # code for the first tablet (container: bin/pwl-activation-code)
 ./gradlew test
 ./gradlew integrationTest     # Testcontainers Postgres
 ./gradlew contractTest        # validate against openapi.yaml

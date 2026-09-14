@@ -1,11 +1,10 @@
 package id.primawash.api.plugins
 
 import id.primawash.api.auth.authRoutes
-import id.primawash.api.auth.deviceAuthRoutes
+import id.primawash.api.auth.publicAuthRoutes
 import id.primawash.api.branch.branchRoutes
 import id.primawash.api.catalog.catalogRoutes
 import id.primawash.api.customer.customerRoutes
-import id.primawash.api.device.deviceActivationRoutes
 import id.primawash.api.device.deviceRoutes
 import id.primawash.api.health.healthRoutes
 import id.primawash.api.staff.staffRoutes
@@ -29,7 +28,7 @@ fun Application.configureRouting(
     dataSource: DataSource,
     settings: ApiSettings,
 ) {
-    configureAuth(get(), get())
+    configureAuth(get())
 
     routing {
         healthRoutes(dataSource, settings.appVersion)
@@ -38,11 +37,8 @@ fun Application.configureRouting(
             route(API_BASE_PATH) {
                 install(AppVersionGate) { minimum = settings.minAppVersion }
 
-                deviceActivationRoutes(get())
-
-                authenticate(DEVICE_AUTH) {
-                    deviceAuthRoutes(get())
-                }
+                // The login screen: no token of any kind — pick a branch, type a PIN.
+                publicAuthRoutes(get())
 
                 authenticate(STAFF_AUTH) {
                     authRoutes(get())

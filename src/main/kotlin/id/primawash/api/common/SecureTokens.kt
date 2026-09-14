@@ -5,9 +5,9 @@ import java.security.SecureRandom
 import java.util.Base64
 
 /**
- * Opaque credentials: device tokens, refresh tokens and staff proofs.
+ * Opaque credentials: refresh tokens and staff proofs.
  *
- * Each is 256 random bits with a readable prefix (`dt_`, `rt_`, `sp_`). Only the SHA-256 of a token
+ * Each is 256 random bits with a readable prefix (`rt_`, `sp_`). Only the SHA-256 of a token
  * is stored — with that much entropy a plain hash is enough, unlike a 4–6 digit PIN (see PinHasher).
  * A raw token is returned to the client exactly once and never logged.
  */
@@ -18,12 +18,6 @@ class SecureTokens(
         val bytes = ByteArray(TOKEN_BYTES).also(random::nextBytes)
         return prefix + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
-
-    /** A code from [alphabet], e.g. the 8-character device activation code. */
-    fun newCode(
-        length: Int,
-        alphabet: String,
-    ): String = String(CharArray(length) { alphabet[random.nextInt(alphabet.length)] })
 
     /** Uniform integer in `[from, until)`, for generated PINs. */
     fun nextInt(

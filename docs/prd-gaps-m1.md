@@ -8,12 +8,41 @@ PRD ke repo ini.
 Aturan yang dipakai saat mengisi: bila use case klien sudah punya teksnya, teks itu yang dipakai apa
 adanya; hanya yang benar-benar belum ada yang didrafkan baru.
 
+## 0. Keputusan owner: login tanpa aktivasi perangkat (14 September 2026)
+
+**Mengubah PRD §8.1 dan §12.1.** Pengguna tablet adalah owner lanjut usia dan kasir yang tidak boleh
+direpotkan langkah teknis, jadi alurnya cukup **pilih cabang → ketik PIN → masuk**. Tidak ada kode
+aktivasi dan tidak ada token perangkat.
+
+| Sebelumnya (PRD §12.1) | Sekarang |
+|---|---|
+| Owner membuat kode aktivasi, tablet menukarnya dengan `deviceToken` | Dihapus: `POST /devices/activate`, `POST /devices/activation-codes`, tabel `device_activation_codes` (V4) |
+| `GET /login-options`, `POST /auth/pin-login`, `POST /auth/refresh` butuh `Authorization: Bearer <deviceToken>` | Publik. `pin-login` dan `refresh` wajib header `X-Device-Id` |
+| Perangkat terdaftar oleh owner | Aplikasi membuat UUID instalasi sendiri saat pertama dibuka (tidak terlihat pengguna); server mencatat tablet pada percobaan login pertama dan mengaudit `DEVICE_ACTIVATED` saat login pertamanya berhasil |
+
+Yang **tetap** berlaku lewat `X-Device-Id`: batas 5 PIN salah per tablet per 5 menit, satu sesi per
+tablet, refresh token hanya dari tablet yang sama, dan owner bisa **memblokir tablet hilang**
+(`DELETE /devices/{id}`) — tablet itu tidak bisa login maupun refresh lagi.
+
+**Risiko yang diterima owner.** Tanpa pengikatan perangkat, login PIN bisa dicoba dari mana saja di
+internet, dan ID instalasi bisa dikarang ulang untuk menghindari kunci per tablet. PIN 4 digit hanya
+punya 10.000 kombinasi. Pengaman tambahan yang dipasang: **maksimal 20 percobaan login PIN per alamat
+jaringan per 5 menit** (`429 RATE_LIMITED`; semua tablet satu toko biasanya berbagi satu alamat, jadi
+batasnya dibuat longgar untuk pemakaian normal). Penyerang yang berganti-ganti alamat tetap bisa
+menebak. Saran untuk mengurangi risiko tanpa menambah langkah bagi kasir:
+
+1. **PIN owner 6 digit** (sudah didukung, 4–6 digit) — ruang tebakan untuk akun paling berkuasa naik
+   100×.
+2. Pantau audit `LOGIN_FAILED` / `PIN_LOCKED` di laporan owner (M3), dan pertimbangkan alert bila
+   lonjakan.
+3. Bila suatu saat terjadi insiden, aktivasi perangkat bisa dikembalikan sebagai langkah sekali pasang
+   oleh owner, tanpa mengubah alur harian kasir.
+
 ## 1. Kode error baru (usulan tambahan Lampiran B)
 
 | Code | HTTP | Pesan | Kapan |
 |---|---|---|---|
-| `DEVICE_UNAUTHORIZED` | 401 | Perangkat belum diaktivasi atau sudah dicabut owner — aktivasi ulang perangkat ini. | Token perangkat tidak ada/tidak dikenal/dicabut di endpoint **D** (`login-options`, `pin-login`, `refresh`), atau sesi staff dari perangkat yang sudah dicabut. Klien kembali ke layar aktivasi — beda dengan `UNAUTHENTICATED` yang kembali ke layar PIN. |
-| `ACTIVATION_CODE_INVALID` | 422 | Kode aktivasi tidak dikenali atau sudah kedaluwarsa — minta kode baru ke owner. | `POST /devices/activate`: kode salah format, tidak dikenal, sudah dipakai, atau lewat 24 jam. Sengaja satu pesan untuk semua kasus (tidak membocorkan kode mana yang pernah valid). |
+| `DEVICE_UNAUTHORIZED` | 401 | Tablet ini sudah diblokir owner — hubungi owner untuk memakai tablet lain. | `pin-login`, `refresh`, atau request ber-sesi dari tablet yang diblokir owner. Beda dengan `UNAUTHENTICATED` (kembali ke layar PIN). |
 | `STAFF_REQUIRED` | 422 | Pilih staff dulu. | `verify-pin` / `switch-staff` tanpa `staffId` atau dengan id yang tidak dikenal. Teks dari `VerifyStaffPinUseCase`; di klien ini `BusinessRuleException` tanpa kode. |
 
 ## 2. Pesan untuk kode yang sudah ada tetapi belum punya teks
@@ -36,7 +65,6 @@ adanya; hanya yang benar-benar belum ada yang didrafkan baru.
 
 | action_type | Kalimat `action` | Kapan |
 |---|---|---|
-| `DEVICE_ACTIVATION_CODE_CREATED` | Buat kode aktivasi perangkat[ untuk Cabang {nama}] · berlaku 24 jam | Owner (atau CLI server) membuat kode. Setiap mutasi wajib diaudit; Lampiran C belum punya tipe untuk ini. |
 | `CUSTOMER_UPDATED` | Ubah nama customer {lama} → {baru} / Ubah opt-in WA customer {nama}: ya | `PATCH /customers/{id}` selain opt-out. Opt-out memakai `CUSTOMER_OPTED_OUT` yang sudah ada. |
 
 Kalimat audit lain yang tidak tertulis di PRD tetapi disalin dari klien: `SERVICE_TOGGLED` "Nonaktifkan
@@ -44,19 +72,17 @@ layanan {nama} ({kategori}) — berlaku semua cabang", `LOYALTY_RATE_CHANGED` "S
 — Rp10.000 = 100 poin, berlaku semua cabang", `REWARD_ADDED` "Tambah reward {nama} — 1.000 poin, nilai
 Rp10.000" (ditambah " · minimum belanja Rp75.000" bila `minSubtotal` diisi), `REWARD_TOGGLED`
 "Nonaktifkan reward {nama} (1.500 poin) — berlaku semua cabang", `LOGOUT` "Logout dari perangkat Cabang
-{nama}". Kalimat baru: `DEVICE_ACTIVATED` "Aktivasi perangkat {nama}[ untuk Cabang {nama}]",
-`DEVICE_REVOKED` "Cabut perangkat {nama}", `LOGIN_FAILED` "PIN ditolak di perangkat Cabang {nama} —
+{nama}". Kalimat baru: `DEVICE_ACTIVATED` "Tablet baru dipakai login pertama kali di Cabang {nama}",
+`DEVICE_REVOKED` "Blokir perangkat {nama}", `LOGIN_FAILED` "PIN ditolak di perangkat Cabang {nama} —
 {KODE}", `PIN_LOCKED` "Perangkat {nama} dikunci 5 menit — 5 PIN salah dalam 5 menit" / "Akun {nama}
 dikunci 15 menit — 5 PIN salah berturut-turut".
 
 ## 4. Bentuk request/respons yang PRD belum tentukan
 
-- `POST /devices/activation-codes` — body opsional `{ "branchId"? }` → `201 { code: "ABCD-EFGH", branchId, expiresAt }`.
-  Alfabet kode tanpa 0/O/1/I/L.
-- `POST /devices/activate` — `{ code, name?, appVersion? }` → `201 { deviceToken: "dt_…", device }`. Kode boleh
-  huruf kecil dan dengan/tanpa `-`.
-- `GET /devices` → `{ items: [Device] }`; `DELETE /devices/{id}` → `{ device, changed }`.
-- `POST /auth/refresh` — `{ refreshToken }` → bentuk yang sama dengan `pin-login` (termasuk `context`).
+- `GET /devices` → `{ items: [Device] }` (hanya tablet yang pernah login; `id` = `X-Device-Id`,
+  `firstSeenAt`); `DELETE /devices/{id}` → `{ device, changed }`.
+- `POST /auth/refresh` — header `X-Device-Id` + `{ refreshToken }` → bentuk yang sama dengan `pin-login`
+  (termasuk `context`).
 - `POST /auth/switch-branch` → `{ changed, accessToken?, accessTokenExpiresIn?, refreshToken?, refreshTokenExpiresIn?, context }`;
   token `null` bila cabang sama.
 - `POST /auth/logout` → `{ lastBranchId }`.
@@ -68,11 +94,9 @@ dikunci 15 menit — 5 PIN salah berturut-turut".
 
 ## 5. Keputusan perilaku yang perlu dikonfirmasi owner / tim Android
 
-1. **Token perangkat dikirim sebagai `Authorization: Bearer <deviceToken>`** (contoh PRD §8.1). Draft
-   `openapi.yaml` M0 sempat menulis header `X-Device-Token`; sudah diselaraskan ke PRD.
-2. **`X-Device-Id` tidak diwajibkan.** PRD §6.1 menyebutnya wajib, tetapi perangkat sudah terikat ke
-   token. Bila dikirim, harus sama dengan perangkat token (kalau tidak → 401). Menolak request tanpa
-   header ini tidak menambah keamanan.
+1. **Tanpa aktivasi perangkat** — lihat bagian 0.
+2. **`X-Device-Id` wajib di `pin-login` dan `refresh`**, opsional di endpoint lain; bila dikirim di
+   endpoint ber-sesi harus sama dengan tablet sesi (kalau tidak → 401).
 3. **Sesi berakhir 18 jam sejak login**; rotasi refresh token tidak memperpanjangnya. "Satu hari
    operasional" dibaca sebagai batas mutlak.
 4. **Satu perangkat, satu sesi staff.** Login PIN atau ganti staff mencabut sesi lain di tablet yang sama.
@@ -94,11 +118,10 @@ dikunci 15 menit — 5 PIN salah berturut-turut".
 11. **Simpan rate yang sama dengan rate aktif tidak menyisipkan baris baru** di `loyalty_rates`.
 12. **Opt-out lewat `PATCH /customers/{id}` membatalkan pesan WA `QUEUED` customer tsb**, sama seperti
     balasan STOP (§10.4).
-13. **Owner boleh mencabut perangkat yang sedang ia pakai** (sesinya ikut berakhir). Tidak ada kode error
+13. **Owner boleh memblokir tablet yang sedang ia pakai** (sesinya ikut berakhir). Tidak ada kode error
     khusus seperti `BRANCH_IN_USE`.
 14. **`minSubtotal` = 0 diperlakukan sebagai tanpa minimum** (`null`).
-15. **Tablet pertama** diaktivasi dengan kode dari server: `bin/pwl-activation-code <KODE_CABANG>` di
-    container API (lokal: `./gradlew issueActivationCode -Pbranch=TBT`). Kode diatribusikan ke owner aktif
-    pertama dan diaudit.
+15. **Daftar tablet owner hanya menampilkan tablet yang pernah berhasil login**, supaya percobaan PIN
+    dari ID instalasi karangan tidak memenuhi daftar.
 16. **`staffProof` dari `verify-pin` sudah disimpan di M1** (tabel `staff_proofs`, sekali pakai, 5 menit),
     tetapi baru dipakai `POST /shifts` di M2.

@@ -8,7 +8,7 @@ info:
     Kontrak resmi ada di `docs/PRD-Backend-REST-API.md`. Bila dokumen ini dan PRD berbeda,
     **PRD yang menang** — perbaiki file ini di PR yang sama.
 
-    **Status M1.** Terspesifikasi lengkap: health, perangkat & autentikasi, cabang, staff, price
+    **Status M1.** Terspesifikasi lengkap: health, layar login & sesi, perangkat, cabang, staff, price
     list, loyalty, reward, dan customer. Permukaan milestone berikutnya didaftar di
     `x-planned-endpoints`; tiap endpoint dipindahkan ke `paths` pada PR yang mengimplementasikannya.
     Setiap respons di `paths` divalidasi terhadap skema di berkas ini oleh `./gradlew contractTest`.
@@ -39,7 +39,7 @@ tags:
   - name: health
     description: Liveness & readiness untuk load balancer dan monitoring.
   - name: auth
-    description: Aktivasi perangkat, login PIN, sesi (PRD §8.1).
+    description: Layar login (pilih cabang → PIN), sesi, tablet (PRD §8.1).
   - name: master-data
     description: Cabang, staff, price list, loyalty, reward (PRD §8.2–§8.4).
   - name: customer
@@ -105,93 +105,20 @@ paths:
                 database: DOWN
 
   # ---------------------------------------------------------------------------------------------
-  # Perangkat & autentikasi — PRD §8.1
+  # Layar login & sesi — PRD §8.1 (tanpa aktivasi perangkat, lihat docs/prd-gaps-m1.md)
   # ---------------------------------------------------------------------------------------------
-  /api/v1/devices/activate:
-    post:
-      tags: [auth]
-      summary: Tukar kode aktivasi dengan token perangkat
-      description: |
-        Publik — tablet belum punya kredensial. Kode 8 karakter (boleh dengan/tanpa `-`, huruf besar
-        atau kecil) harus belum dipakai dan belum kedaluwarsa (24 jam); kode dipakai di transaksi yang
-        sama yang membuat perangkat. `deviceToken` hanya dikembalikan sekali — server menyimpan
-        hash-nya saja. Nama perangkat opsional; default "Tablet Cabang {nama}".
-      operationId: activateDevice
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ActivateDeviceRequest"
-            example:
-              code: K7QM-2XPA
-              name: Tablet Kasir Tebet 1
-              appVersion: 1.4.0
-      responses:
-        "201":
-          description: "Perangkat aktif. Header `Cache-Control: no-store`."
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ActivateDeviceResponse"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "422":
-          description: "`ACTIVATION_CODE_INVALID` — kode tidak dikenal, sudah dipakai, atau kedaluwarsa."
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorEnvelope"
-              example:
-                error:
-                  code: ACTIVATION_CODE_INVALID
-                  message: Kode aktivasi tidak dikenali atau sudah kedaluwarsa — minta kode baru ke owner.
-
-  /api/v1/devices/activation-codes:
-    post:
-      tags: [auth]
-      summary: Buat kode aktivasi (owner)
-      description: |
-        Kode 8 karakter berlaku 24 jam, opsional menetapkan cabang awal perangkat. Kode ditampilkan
-        sekali (`Cache-Control: no-store`). Audit `DEVICE_ACTIVATION_CODE_CREATED`. Untuk tablet
-        pertama (belum ada perangkat untuk login owner) gunakan `bin/pwl-activation-code <KODE_CABANG>`
-        di server.
-      operationId: createActivationCode
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateActivationCodeRequest"
-      responses:
-        "201":
-          description: Kode dibuat.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ActivationCodeResponse"
-              example:
-                code: K7QM-2XPA
-                branchId: 7f1c2d3e-0000-4000-8000-000000000001
-                expiresAt: "2026-09-16T02:00:00.000Z"
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          $ref: "#/components/responses/NotFound"
-
   /api/v1/devices:
     get:
       tags: [auth]
-      summary: Daftar perangkat (owner)
+      summary: Daftar tablet (owner)
+      description: |
+        Tablet yang pernah berhasil login, terbaru dulu, termasuk yang sudah diblokir. Tablet tercatat
+        otomatis dari `X-Device-Id` pada login pertamanya — tidak ada langkah aktivasi. Instalasi yang
+        hanya mencoba PIN tanpa pernah berhasil tidak ditampilkan.
       operationId: listDevices
       responses:
         "200":
-          description: Semua perangkat, terbaru diaktivasi dulu, termasuk yang sudah dicabut.
+          description: Daftar tablet.
           content:
             application/json:
               schema:
@@ -204,11 +131,11 @@ paths:
   /api/v1/devices/{id}:
     delete:
       tags: [auth]
-      summary: Cabut perangkat (owner)
+      summary: Blokir tablet (owner)
       description: |
-        Token perangkat berhenti berlaku dan semua sesi di tablet itu dicabut dalam transaksi yang
-        sama. Mencabut perangkat yang sudah dicabut → `changed: false` tanpa audit. Audit
-        `DEVICE_REVOKED` "Cabut perangkat {nama}".
+        Untuk tablet yang hilang: tablet tidak bisa login PIN maupun refresh lagi, dan semua sesinya
+        dicabut dalam transaksi yang sama. Memblokir tablet yang sudah diblokir → `changed: false` tanpa
+        audit. Audit `DEVICE_REVOKED` "Blokir perangkat {nama}". `{id}` = `X-Device-Id` tablet tsb.
       operationId: revokeDevice
       parameters:
         - $ref: "#/components/parameters/IdPath"
@@ -233,11 +160,14 @@ paths:
       tags: [auth]
       summary: Pilihan layar login
       description: |
-        Cabang, nama pendek kasir aktif, dan status shift terakhir per cabang, plus `lastBranchId`
-        perangkat untuk preselect. **Tidak pernah** mengirim data PIN.
+        **Publik** — layar pertama aplikasi, termasuk setelah fresh install. Cabang, nama pendek kasir
+        aktif, dan status shift terakhir per cabang. Bila `X-Device-Id` dikirim dan tablet itu pernah
+        login, `lastBranchId` berisi cabang terakhirnya untuk dipilih otomatis. **Tidak pernah** mengirim
+        data PIN.
       operationId: getLoginOptions
-      security:
-        - deviceToken: []
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdOptional"
       responses:
         "200":
           description: Pilihan login.
@@ -258,22 +188,27 @@ paths:
                     shift:
                       open: true
                       openedByName: Siti Nurhaliza
-        "401":
-          $ref: "#/components/responses/DeviceUnauthorized"
 
   /api/v1/auth/pin-login:
     post:
       tags: [auth]
-      summary: Login PIN di cabang perangkat
+      summary: Login PIN di cabang yang dipilih
       description: |
+        **Publik** — cukup pilih cabang dan ketik PIN, tanpa aktivasi perangkat. Header `X-Device-Id`
+        wajib: ID instalasi yang dibuat aplikasi sendiri saat pertama dibuka (UUID, disimpan permanen,
+        tidak pernah ditampilkan ke pengguna). Tablet tercatat di server pada percobaan pertamanya.
+        Maksimal 20 percobaan per alamat jaringan per 5 menit → `429 RATE_LIMITED`.
+
         Urutan pengecekan (`LoginWithPinUseCase`), kesalahan pertama yang dikembalikan:
 
         | # | Kondisi | HTTP / code | `details.clearPin` |
         |---|---|---|---|
+        | 0 | `X-Device-Id` tidak ada / bukan UUID | 400 `VALIDATION_ERROR` | — |
         | 1 | Cabang tidak ada / id tidak valid | 422 `BRANCH_REQUIRED` | false |
         | 2 | Cabang nonaktif | 422 `BRANCH_INACTIVE` | false |
         | 3 | PIN bukan 4–6 digit angka | 422 `PIN_FORMAT` | false |
-        | 4 | Perangkat terkunci (5 PIN salah dalam 5 menit) | 423 `PIN_LOCKED` + `Retry-After` | true |
+        | 4a | Tablet diblokir owner | 401 `DEVICE_UNAUTHORIZED` | — |
+        | 4b | Tablet terkunci (5 PIN salah dalam 5 menit) | 423 `PIN_LOCKED` + `Retry-After` | true |
         | 5 | PIN tidak cocok | 422 `PIN_UNKNOWN` | true |
         | 6 | Akun terkunci (5 salah berturut-turut di verify-pin/switch-staff) | 423 `PIN_LOCKED` | true |
         | 7 | Akun nonaktif | 422 `STAFF_INACTIVE` | true |
@@ -284,10 +219,13 @@ paths:
 
         Sukses: `last_login_at`, sesi baru (sesi lain di perangkat ini berakhir), `last_branch_id`
         perangkat, audit `LOGIN` "Login PIN sebagai kasir Tebet di perangkat Cabang Tebet" /
-        "… sebagai owner/admin …". Header `Cache-Control: no-store`.
+        "… sebagai owner/admin …", dan — pada login pertama sebuah tablet — `DEVICE_ACTIVATED`. Header
+        `Cache-Control: no-store`.
       operationId: pinLogin
-      security:
-        - deviceToken: []
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdRequired"
+        - $ref: "#/components/parameters/AppVersion"
       requestBody:
         required: true
         content:
@@ -307,11 +245,13 @@ paths:
         "400":
           $ref: "#/components/responses/ValidationError"
         "401":
-          $ref: "#/components/responses/DeviceUnauthorized"
+          $ref: "#/components/responses/DeviceBlocked"
         "422":
           $ref: "#/components/responses/BusinessRule"
         "423":
           $ref: "#/components/responses/PinLocked"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 
   /api/v1/auth/refresh:
     post:
@@ -320,10 +260,13 @@ paths:
       description: |
         Refresh token dirotasi setiap dipakai — token lama langsung tidak berlaku. Sesi tetap berakhir
         18 jam sejak login (rotasi tidak memperpanjangnya), sehingga `refreshTokenExpiresIn` adalah
-        sisa waktunya. Token tidak dikenal, dicabut, kedaluwarsa, atau milik perangkat lain → 401.
+        sisa waktunya. Publik (tanpa access token), tetapi `X-Device-Id` wajib dan harus tablet yang
+        sama dengan saat login. Token tidak dikenal, dicabut, kedaluwarsa, atau milik tablet lain → 401
+        `UNAUTHENTICATED`; tablet diblokir → 401 `DEVICE_UNAUTHORIZED`.
       operationId: refreshSession
-      security:
-        - deviceToken: []
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdRequired"
       requestBody:
         required: true
         content:
@@ -1118,25 +1061,29 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: |
-        Access token staff (60 menit) dari `pin-login`, `refresh`, `switch-staff`, atau `switch-branch`.
+        Access token staff (60 menit) dari `pin-login`, `refresh`, `switch-staff`, atau `switch-branch` —
+        satu-satunya kredensial API. Layar login (`login-options`, `pin-login`, `refresh`) tidak memakainya.
         Sesinya dicek ulang di database setiap request — reset PIN, akun dinonaktifkan, atau perangkat
         dicabut langsung berlaku. Role dan cabang dibaca dari sesi, tidak pernah dari body.
-    deviceToken:
-      type: http
-      scheme: bearer
-      bearerFormat: opaque (dt_…)
-      description: |
-        Token perangkat hasil `POST /devices/activate`, dikirim sebagai `Authorization: Bearer <deviceToken>`
-        (PRD §8.1). Hanya untuk `login-options`, `pin-login`, dan `refresh`.
 
   parameters:
-    DeviceId:
+    DeviceIdRequired:
+      name: X-Device-Id
+      in: header
+      required: true
+      description: |
+        ID instalasi tablet: UUID yang dibuat aplikasi saat pertama dibuka dan disimpan permanen.
+        Mengidentifikasi tablet untuk batas PIN salah, satu sesi per tablet, dan pemblokiran oleh owner.
+      schema:
+        type: string
+        format: uuid
+    DeviceIdOptional:
       name: X-Device-Id
       in: header
       required: false
       description: |
-        Identitas perangkat (PRD §6.1 menyebutnya wajib). Server tidak bergantung padanya — perangkat
-        sudah terikat ke token — tetapi bila dikirim harus sama dengan perangkat token, kalau tidak 401.
+        ID instalasi tablet. Di endpoint ber-access-token, bila dikirim harus sama dengan tablet sesi
+        (kalau tidak → 401).
       schema:
         type: string
         format: uuid
@@ -1259,42 +1206,13 @@ components:
       format: date-time
       pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$"
 
-    CreateActivationCodeRequest:
-      type: object
-      properties:
-        branchId:
-          $ref: "#/components/schemas/NullableUuid"
-
-    ActivationCodeResponse:
-      type: object
-      required: [code, branchId, expiresAt]
-      properties:
-        code:
-          type: string
-          pattern: "^[A-Z2-9]{4}-[A-Z2-9]{4}$"
-        branchId:
-          $ref: "#/components/schemas/NullableUuid"
-        expiresAt:
-          $ref: "#/components/schemas/Timestamp"
-
-    ActivateDeviceRequest:
-      type: object
-      required: [code]
-      properties:
-        code:
-          type: string
-        name:
-          type: [string, "null"]
-          maxLength: 60
-        appVersion:
-          type: [string, "null"]
-
     Device:
       type: object
-      required: [id, name, platform, appVersion, lastBranchId, activatedAt, lastSeenAt, pendingCount, revokedAt]
+      required: [id, name, platform, appVersion, lastBranchId, firstSeenAt, lastSeenAt, pendingCount, revokedAt]
       properties:
         id:
           $ref: "#/components/schemas/Uuid"
+          description: ID instalasi yang dikirim tablet sebagai `X-Device-Id`.
         name:
           type: string
         platform:
@@ -1304,7 +1222,7 @@ components:
           type: string
         lastBranchId:
           $ref: "#/components/schemas/NullableUuid"
-        activatedAt:
+        firstSeenAt:
           $ref: "#/components/schemas/Timestamp"
         lastSeenAt:
           $ref: "#/components/schemas/NullableTimestamp"
@@ -1313,16 +1231,6 @@ components:
           minimum: 0
         revokedAt:
           $ref: "#/components/schemas/NullableTimestamp"
-
-    ActivateDeviceResponse:
-      type: object
-      required: [deviceToken, device]
-      properties:
-        deviceToken:
-          type: string
-          pattern: "^dt_"
-        device:
-          $ref: "#/components/schemas/Device"
 
     DeviceListResponse:
       type: object
@@ -1994,8 +1902,8 @@ components:
               message: Sesi berakhir — silakan login ulang dengan PIN.
               details: null
               requestId: req_01J9K3M2Q7XF4T8B
-    DeviceUnauthorized:
-      description: "401 `DEVICE_UNAUTHORIZED` — token perangkat tidak ada, tidak dikenal, atau perangkat dicabut. Klien kembali ke layar aktivasi."
+    DeviceBlocked:
+      description: "401 `DEVICE_UNAUTHORIZED` — tablet diblokir owner. Klien menampilkan pesannya; tablet ini tidak bisa dipakai login lagi."
       content:
         application/json:
           schema:
@@ -2003,7 +1911,7 @@ components:
           example:
             error:
               code: DEVICE_UNAUTHORIZED
-              message: Perangkat belum diaktivasi atau sudah dicabut owner — aktivasi ulang perangkat ini.
+              message: Tablet ini sudah diblokir owner — hubungi owner untuk memakai tablet lain.
               details: null
               requestId: req_01J9K3M2Q7XF4T8B
     Forbidden:
@@ -2087,7 +1995,7 @@ components:
           schema:
             $ref: "#/components/schemas/ErrorEnvelope"
     RateLimited:
-      description: "429 — melewati batas 120 request/menit per perangkat; header `Retry-After`."
+      description: "429 — melewati batas 120 request/menit per perangkat, atau 20 percobaan login PIN per alamat jaringan per 5 menit; header `Retry-After`."
       content:
         application/json:
           schema:

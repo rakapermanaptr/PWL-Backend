@@ -48,10 +48,3 @@ data class StaffPrincipal(
         const val OWNER_ONLY_MESSAGE = "Fitur ini hanya untuk owner/admin."
     }
 }
-
-/** A registered tablet, before any staff has logged in on it (endpoints marked **D** in PRD §8). */
-data class DevicePrincipal(
-    val deviceId: UUID,
-    val name: String,
-    val lastBranchId: UUID?,
-)

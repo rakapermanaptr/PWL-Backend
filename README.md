@@ -17,7 +17,8 @@ offline**.
 
 **M1 selesai di `development` — identitas & master data.** Di atas fondasi M0 (Gradle/Ktor JVM 21,
 Flyway, seed pilot, CI, Docker, staging di <https://pwl-cashier-staging-rvz75.ondigitalocean.app>)
-sekarang ada: aktivasi perangkat, login PIN dengan batas percobaan per perangkat & per akun, sesi
+sekarang ada: login "pilih cabang → ketik PIN" tanpa aktivasi perangkat, batas percobaan per tablet,
+per akun & per alamat jaringan, sesi
 JWT + refresh token berotasi, ganti staff/cabang, cabang, staff, price list, loyalty rate, reward,
 customer, dan audit untuk setiap mutasi. `openapi.yaml` menspesifikasikan semua endpoint M1 dan
 setiap respons divalidasi terhadapnya. Kode/pesan yang belum ada di PRD dicatat di
@@ -27,7 +28,6 @@ setiap respons divalidasi terhadapnya. Kode/pesan yang belum ada di PRD dicatat 
 |---|---|
 | Migrasi ke Postgres lokal | `./gradlew flywayMigrate` |
 | Master data pilot (PRD Lampiran D) | `./gradlew seedPilot` |
-| Kode aktivasi tablet pertama | `./gradlew issueActivationCode -Pbranch=TBT` (container: `bin/pwl-activation-code TBT`) |
 | API | `./gradlew run` → `/health`, `/api/v1/…` |
 | Unit test aturan bisnis Service | `./gradlew test` |
 | Alur API + constraint + konkurensi di Postgres asli | `./gradlew integrationTest` |
@@ -145,7 +145,7 @@ pwl-cashier/
     │   │                         #   Idempotency, Pagination, AuditWriter
     │   ├── db/                   # Database.kt (Hikari+Exposed), Tables.kt, tx helpers
     │   ├── auth/                 # PIN login/refresh/verify/switch, sesi, JWT, PinHasher
-    │   ├── device/               # kode aktivasi, aktivasi & pencabutan tablet
+    │   ├── device/               # tablet (X-Device-Id): pencatatan otomatis, daftar, blokir
     │   ├── branch/               # cabang + overview owner
     │   ├── staff/                # akun staff, reset PIN, aktif/nonaktif
     │   ├── catalog/              # services, price history, loyalty rate, rewards
@@ -156,7 +156,7 @@ pwl-cashier/
     │   │                         #   webhook, failures (M5 — fase akhir)
     │   ├── report/               # dashboard, daily sales, audit query
     │   ├── sync/                 # bootstrap, changes, heartbeat perangkat
-    │   └── tools/                # SeedPilot, IssueActivationCode (CLI)
+    │   └── tools/                # SeedPilot (CLI)
     ├── main/resources/
     │   ├── db/migration/         # Flyway: V1__init.sql, V2__…
     │   ├── application.conf
@@ -199,19 +199,11 @@ Seed data pilot (3 cabang, price list, reward, rate, staff) dijalankan lewat `./
 — **hanya untuk `dev`/`staging`**. Di produksi master data dibuat lewat endpoint owner, dan PIN demo
 wajib diganti sebelum go-live.
 
-### Tablet pertama
+### Login di tablet
 
-Login PIN hanya bisa dari perangkat yang sudah diaktivasi, dan kode aktivasi biasanya dibuat owner
-dari tablet — jadi tablet pertama butuh kode dari server:
-
-```bash
-./gradlew issueActivationCode -Pbranch=TBT        # lokal
-bin/pwl-activation-code TBT                        # staging/prod: di console container `api`
-```
-
-Kode 8 karakter (berlaku 24 jam) dicetak ke layar, bukan ke log. Tablet menukarnya lewat
-`POST /api/v1/devices/activate`, lalu owner login PIN dan membuat kode untuk tablet lain lewat
-`POST /api/v1/devices/activation-codes`.
+Tidak ada langkah aktivasi (keputusan owner — [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) bagian 0).
+Aplikasi membuat UUID instalasi saat pertama dibuka dan mengirimnya sebagai `X-Device-Id`; alurnya
+`GET /api/v1/login-options` → pilih cabang → `POST /api/v1/auth/pin-login` → access token.
 
 ### Environment variables
 
@@ -272,8 +264,8 @@ kosong, itu bug.
 | Paginasi | Cursor — `?limit=50&cursor=<opaque>` → `{ "items": [...], "nextCursor": … }` |
 | Idempotensi | Header `Idempotency-Key` **wajib** di `POST /orders`, `/orders/sync`, `/shifts`, `/shifts/{id}/cash-entries`, `/shifts/{id}/close` |
 | Konkurensi | Resource yang bisa diubah dua perangkat membawa `version` / `fromStatus` → `409` bila berubah |
-| Autentikasi | `Authorization: Bearer <deviceToken>` untuk `login-options`/`pin-login`/`refresh`; `Bearer <accessToken>` untuk sisanya |
-| Header | `X-App-Version` (→ `426` bila di bawah `MIN_APP_VERSION`); `X-Device-Id` opsional tetapi harus cocok dengan token bila dikirim |
+| Autentikasi | Layar login publik (`login-options`, `pin-login`, `refresh`); sisanya `Authorization: Bearer <accessToken>` |
+| Header | `X-Device-Id` (UUID instalasi) wajib di `pin-login`/`refresh`, harus cocok dengan sesi bila dikirim di endpoint lain; `X-App-Version` (→ `426` bila di bawah `MIN_APP_VERSION`) |
 
 Semua error memakai amplop yang sama, dan **`message` adalah kalimat Bahasa Indonesia yang siap
 ditampilkan ke kasir apa adanya**:
@@ -296,7 +288,7 @@ case klien yang sudah berjalan, supaya UX kasir tidak berubah.
 
 | Domain | Endpoint |
 |---|---|
-| Perangkat & auth | `POST /devices/activate` · `POST /devices/activation-codes` · `GET/DELETE /devices` · `GET /login-options` · `POST /auth/pin-login` · `/auth/refresh` · `/auth/verify-pin` · `/auth/switch-staff` · `/auth/switch-branch` · `/auth/logout` · `GET /me` |
+| Perangkat & auth | `GET/DELETE /devices` · `GET /login-options` · `POST /auth/pin-login` · `/auth/refresh` · `/auth/verify-pin` · `/auth/switch-staff` · `/auth/switch-branch` · `/auth/logout` · `GET /me` |
 | Cabang | `GET /branches` · `GET /branches/overview` · `PATCH /branches/{id}` |
 | Staff | `GET /staff` · `POST /staff` · `POST /staff/{id}/reset-pin` · `PATCH /staff/{id}` |
 | Katalog | `GET/POST /services` · `PATCH /services/prices` · `PATCH /services/{id}` · `GET/PUT /loyalty/rate` · `GET/POST /rewards` · `PATCH /rewards/{id}` |

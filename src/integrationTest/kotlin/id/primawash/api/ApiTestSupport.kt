@@ -1,7 +1,6 @@
 package id.primawash.api
 
 import id.primawash.api.auth.PinHasher
-import id.primawash.api.common.SecureTokens
 import id.primawash.api.db.DatabaseFactory
 import id.primawash.api.plugins.ApiSettings
 import id.primawash.api.tools.seedPilot
@@ -11,6 +10,7 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -110,23 +110,8 @@ object ApiTestSupport {
             }
         }
 
-    /** Registers a tablet directly in the database and returns its raw device token. */
-    fun registerDevice(
-        name: String,
-        branchCode: String? = null,
-    ): String {
-        val token = SecureTokens().newToken("dt_")
-        val branch = branchCode?.let { "'${branchId(it)}'" } ?: "NULL"
-        PostgresSupport.withConnection { connection ->
-            connection.createStatement().use {
-                it.execute(
-                    "INSERT INTO devices (name, last_branch_id, token_hash) " +
-                        "VALUES ('$name', $branch, '${SecureTokens.sha256Hex(token)}')",
-                )
-            }
-        }
-        return token
-    }
+    /** A fresh installation id, as the app generates on first launch. Nothing is stored until it logs in. */
+    fun newDevice(): String = UUID.randomUUID().toString()
 }
 
 fun apiTest(
@@ -147,15 +132,22 @@ class TestApi(
     suspend fun get(
         path: String,
         token: String? = null,
-    ): HttpResponse = client.get(API + path) { auth(token) }
+        deviceId: String? = null,
+    ): HttpResponse =
+        client.get(API + path) {
+            auth(token)
+            device(deviceId)
+        }
 
     suspend fun post(
         path: String,
         body: String? = null,
         token: String? = null,
+        deviceId: String? = null,
     ): HttpResponse =
         client.post(API + path) {
             auth(token)
+            device(deviceId)
             json(body)
         }
 
@@ -184,27 +176,37 @@ class TestApi(
         token: String? = null,
     ): HttpResponse = client.delete(API + path) { auth(token) }
 
-    /** PIN login on [deviceToken] at [branchCode]; returns the parsed token response. */
+    /** PIN login from the tablet [deviceId] at [branchCode]; returns the parsed token response. */
     suspend fun login(
-        deviceToken: String,
+        deviceId: String,
         branchCode: String,
         pin: String,
     ): JsonObject {
-        val response =
-            post(
-                "/auth/pin-login",
-                """{"branchId":"${ApiTestSupport.branchId(branchCode)}","pin":"$pin"}""",
-                deviceToken,
-            )
+        val response = pinLogin(deviceId, branchCode, pin)
         response.status shouldBe HttpStatusCode.OK
         return response.json()
     }
 
-    suspend fun ownerToken(deviceToken: String = ApiTestSupport.registerDevice("Tablet Owner", "TBT")): String =
-        login(deviceToken, "TBT", "9090").string("accessToken")
+    suspend fun pinLogin(
+        deviceId: String,
+        branchCode: String,
+        pin: String,
+    ): HttpResponse =
+        post(
+            "/auth/pin-login",
+            """{"branchId":"${ApiTestSupport.branchId(branchCode)}","pin":"$pin"}""",
+            deviceId = deviceId,
+        )
+
+    suspend fun ownerToken(deviceId: String = ApiTestSupport.newDevice()): String =
+        login(deviceId, "TBT", "9090").string("accessToken")
 
     private fun HttpRequestBuilder.auth(token: String?) {
         token?.let { bearerAuth(it) }
+    }
+
+    private fun HttpRequestBuilder.device(deviceId: String?) {
+        deviceId?.let { header("X-Device-Id", it) }
     }
 
     private fun HttpRequestBuilder.json(body: String?) {

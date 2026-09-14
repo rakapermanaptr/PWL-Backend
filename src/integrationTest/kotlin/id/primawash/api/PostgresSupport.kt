@@ -50,7 +50,7 @@ object PostgresSupport {
                     TRUNCATE audit_log, loyalty_rates, order_events, order_items, points_ledger,
                              cash_entries, wa_messages, idempotency_keys, customer_imports, daily_sales,
                              order_number_counters, orders, shifts, customers, sessions,
-                             device_activation_codes, devices, service_price_history, services, rewards,
+                             devices, service_price_history, services, rewards,
                              staff, branches
                     RESTART IDENTITY CASCADE
                     """.trimIndent(),

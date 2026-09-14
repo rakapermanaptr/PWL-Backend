@@ -53,26 +53,11 @@ object DevicesTable : Table("devices") {
     val platform = text("platform")
     val appVersion = text("app_version")
     val lastBranchId = javaUUID("last_branch_id").nullable()
-    val tokenHash = char("token_hash", HASH_LENGTH)
-    val activatedBy = javaUUID("activated_by").nullable()
     val activatedAt = timestampWithTimeZone("activated_at")
     val lastSeenAt = timestampWithTimeZone("last_seen_at").nullable()
     val pendingCount = integer("pending_count")
     val revokedAt = timestampWithTimeZone("revoked_at").nullable()
     val pinLockedUntil = timestampWithTimeZone("pin_locked_until").nullable()
-
-    override val primaryKey = PrimaryKey(id)
-}
-
-object DeviceActivationCodesTable : Table("device_activation_codes") {
-    val id = javaUUID("id")
-    val codeHash = char("code_hash", HASH_LENGTH)
-    val createdBy = javaUUID("created_by")
-    val branchId = javaUUID("branch_id").nullable()
-    val expiresAt = timestampWithTimeZone("expires_at")
-    val usedAt = timestampWithTimeZone("used_at").nullable()
-    val usedByDevice = javaUUID("used_by_device").nullable()
-    val createdAt = timestampWithTimeZone("created_at")
 
     override val primaryKey = PrimaryKey(id)
 }

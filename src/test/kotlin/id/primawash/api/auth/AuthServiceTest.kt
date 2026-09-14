@@ -52,13 +52,12 @@ class AuthServiceTest {
         )
 
     private val tablet = deviceRecord()
-    private val devicePrincipal = DevicePrincipal(tablet.id, tablet.name, TEBET.id)
     private val siti = staffRecord("Siti Nurhaliza")
 
     init {
         every { branches.find(TEBET.id) } returns TEBET
         every { branches.find(BINTARO.id) } returns BINTARO
-        every { devices.lockForPinAttempt(tablet.id) } returns tablet
+        every { devices.registerForPinAttempt(tablet.id, any()) } returns tablet
         every { staff.findByPin(any()) } returns emptyList()
         every { staff.verifyPin(any(), any()) } returns true
         every { repository.countFailedPinAttempts(any(), any()) } returns 1
@@ -71,13 +70,13 @@ class AuthServiceTest {
         runBlocking<Unit> {
             every { branches.find(BINTARO.id) } returns BINTARO.copy(active = false)
 
-            rejection { service.pinLogin(devicePrincipal, null, "1234") }.let {
+            rejection { service.pinLogin(tablet.id, "1.4.0", null, "1234") }.let {
                 it.code shouldBe "BRANCH_REQUIRED"
                 it.clearPin() shouldBe false
             }
-            rejection { service.pinLogin(devicePrincipal, BINTARO.id, "1234") }.message shouldBe
+            rejection { service.pinLogin(tablet.id, "1.4.0", BINTARO.id, "1234") }.message shouldBe
                 "Cabang Bintaro sedang nonaktif — pilih cabang lain atau hubungi owner."
-            rejection { service.pinLogin(devicePrincipal, TEBET.id, "12") }.code shouldBe "PIN_FORMAT"
+            rejection { service.pinLogin(tablet.id, "1.4.0", TEBET.id, "12") }.code shouldBe "PIN_FORMAT"
 
             verify(exactly = 0) { staff.findByPin(any()) }
             audit.second.shouldBeEmpty()
@@ -86,9 +85,10 @@ class AuthServiceTest {
     @Test
     fun `should refuse a locked tablet without evaluating or auditing the pin`() =
         runBlocking<Unit> {
-            every { devices.lockForPinAttempt(tablet.id) } returns tablet.copy(pinLockedUntil = NOW.plusSeconds(90))
+            every { devices.registerForPinAttempt(tablet.id, any()) } returns
+                tablet.copy(pinLockedUntil = NOW.plusSeconds(90))
 
-            val locked = assertThrows<PinLockedException> { service.pinLogin(devicePrincipal, TEBET.id, "1234") }
+            val locked = assertThrows<PinLockedException> { service.pinLogin(tablet.id, "1.4.0", TEBET.id, "1234") }
 
             locked.message shouldBe "Terlalu banyak PIN salah. Coba lagi dalam 2 menit."
             locked.retryAfterSeconds shouldBe 90
@@ -101,7 +101,7 @@ class AuthServiceTest {
         runBlocking<Unit> {
             every { repository.countFailedPinAttempts(tablet.id, NOW.minus(Duration.ofMinutes(5))) } returns 5
 
-            val error = rejection { service.pinLogin(devicePrincipal, TEBET.id, "0000") }
+            val error = rejection { service.pinLogin(tablet.id, "1.4.0", TEBET.id, "0000") }
 
             error.code shouldBe "PIN_UNKNOWN"
             error.clearPin() shouldBe true
@@ -109,7 +109,7 @@ class AuthServiceTest {
             audit.second.map { it.type } shouldBe listOf(AuditActionType.LOGIN_FAILED, AuditActionType.PIN_LOCKED)
             audit.second
                 .first()
-                .actor.actorName shouldBe "Perangkat Tablet Tebet 1"
+                .actor.actorName shouldBe "Perangkat Tablet Cabang Tebet"
         }
 
     @Test
@@ -117,12 +117,12 @@ class AuthServiceTest {
         runBlocking<Unit> {
             val yuni = staffRecord("Yuni Astari", active = false)
             every { staff.findByPin("4321") } returns listOf(yuni)
-            rejection { service.pinLogin(devicePrincipal, TEBET.id, "4321") }.message shouldBe
+            rejection { service.pinLogin(tablet.id, "1.4.0", TEBET.id, "4321") }.message shouldBe
                 "Akun Yuni Astari nonaktif — PIN lama sudah diblokir."
 
             val nia = staffRecord("Nia Ramadhani", branchId = BINTARO.id)
             every { staff.findByPin("2468") } returns listOf(nia)
-            rejection { service.pinLogin(devicePrincipal, TEBET.id, "2468") }.message shouldBe
+            rejection { service.pinLogin(tablet.id, "1.4.0", TEBET.id, "2468") }.message shouldBe
                 "Nia Ramadhani terdaftar di Cabang Bintaro — tidak bisa login di perangkat Cabang Tebet."
 
             audit.second.count { it.type == AuditActionType.LOGIN_FAILED } shouldBe 2
@@ -133,14 +133,36 @@ class AuthServiceTest {
         runBlocking<Unit> {
             every { staff.findByPin("1234") } returns listOf(staffRecord("Yuni Astari", active = false), siti)
 
-            val session = service.pinLogin(devicePrincipal, TEBET.id, "1234")
+            val session = service.pinLogin(tablet.id, "1.4.0", TEBET.id, "1234")
 
             session.context.staff.id shouldBe siti.id
             session.refreshTokenExpiresIn shouldBe Duration.ofHours(18).seconds
             verify { staff.recordSuccessfulLogin(siti.id, NOW) }
             verify { repository.revokeSessionsOfDevice(tablet.id, NOW, null) }
-            verify { devices.recordBranch(tablet.id, TEBET.id) }
+            verify { devices.recordLogin(tablet, TEBET.id, "Tebet", "1.4.0") }
             audit.second.single().action shouldBe "Login PIN sebagai kasir Tebet di perangkat Cabang Tebet"
+        }
+
+    @Test
+    fun `should refuse a blocked tablet before looking at the pin`() =
+        runBlocking<Unit> {
+            every { devices.registerForPinAttempt(tablet.id, any()) } returns null
+
+            rejection { service.pinLogin(tablet.id, null, TEBET.id, "1234") }.code shouldBe "DEVICE_UNAUTHORIZED"
+            verify(exactly = 0) { staff.findByPin(any()) }
+        }
+
+    @Test
+    fun `should audit a tablet's very first login`() =
+        runBlocking<Unit> {
+            val fresh = deviceRecord(name = "Tablet", lastBranchId = null)
+            every { devices.registerForPinAttempt(fresh.id, any()) } returns fresh
+            every { staff.findByPin("1234") } returns listOf(siti)
+
+            service.pinLogin(fresh.id, null, TEBET.id, "1234")
+
+            audit.second.map { it.type } shouldBe listOf(AuditActionType.DEVICE_ACTIVATED, AuditActionType.LOGIN)
+            audit.second.first().action shouldBe "Tablet baru dipakai login pertama kali di Cabang Tebet"
         }
 
     @Test
@@ -149,7 +171,7 @@ class AuthServiceTest {
             val raka = staffRecord("Raka Prasetyo", Role.OWNER)
             every { staff.findByPin("9090") } returns listOf(raka)
 
-            service.pinLogin(devicePrincipal, BINTARO.id, "9090")
+            service.pinLogin(tablet.id, "1.4.0", BINTARO.id, "9090")
 
             audit.second.single().action shouldBe "Login PIN sebagai owner/admin di perangkat Cabang Bintaro"
         }

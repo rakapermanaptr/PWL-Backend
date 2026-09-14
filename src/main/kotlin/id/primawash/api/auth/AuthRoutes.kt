@@ -2,11 +2,14 @@ package id.primawash.api.auth
 
 import id.primawash.api.branch.toDto
 import id.primawash.api.common.Requests
-import id.primawash.api.plugins.devicePrincipal
+import id.primawash.api.plugins.APP_VERSION_HEADER
+import id.primawash.api.plugins.DEVICE_ID_HEADER
+import id.primawash.api.plugins.PIN_LOGIN_RATE_LIMIT
 import id.primawash.api.plugins.staffPrincipal
 import id.primawash.api.staff.toDto
 import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.plugins.ratelimit.rateLimit
 import io.ktor.server.request.receive
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
@@ -16,12 +19,15 @@ import io.ktor.server.routing.post
 import java.util.UUID
 
 /**
- * Endpoints authenticated by the device token (PRD §8.1 "D"). Bodies here carry PINs and tokens:
- * nothing under `/auth` is logged beyond method, path and status.
+ * The login screen's endpoints. Public — there is no device activation step (owner decision, see
+ * `docs/prd-gaps-m1.md`); the app identifies the tablet with the installation id it generates on first
+ * launch, sent as `X-Device-Id`. Bodies here carry PINs and tokens: nothing under `/auth` is logged
+ * beyond method, path and status.
  */
-fun Route.deviceAuthRoutes(service: AuthService) {
+fun Route.publicAuthRoutes(service: AuthService) {
     get("/login-options") {
-        val options = service.loginOptions(call.devicePrincipal())
+        val deviceId = Requests.uuidOrNull(call.request.headers[DEVICE_ID_HEADER], DEVICE_ID_HEADER)
+        val options = service.loginOptions(deviceId)
         call.respond(
             LoginOptionsResponse(
                 lastBranchId = options.lastBranchId?.toString(),
@@ -46,17 +52,21 @@ fun Route.deviceAuthRoutes(service: AuthService) {
         )
     }
 
-    post("/auth/pin-login") {
-        val device = call.devicePrincipal()
-        val body = call.receive<PinLoginRequest>()
-        // A malformed branch id is the same answer as an unknown one: "Pilih cabang perangkat dulu."
-        val branchId = body.branchId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        call.respondSession(service.pinLogin(device, branchId, body.pin))
+    // Attempts per network address are capped: the per-tablet lock alone can be dodged with new ids.
+    rateLimit(PIN_LOGIN_RATE_LIMIT) {
+        post("/auth/pin-login") {
+            val deviceId = call.requiredDeviceId()
+            val body = call.receive<PinLoginRequest>()
+            // A malformed branch id is the same answer as an unknown one: "Pilih cabang perangkat dulu."
+            val branchId = body.branchId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+            val appVersion = call.request.headers[APP_VERSION_HEADER]?.take(MAX_APP_VERSION_LENGTH)
+            call.respondSession(service.pinLogin(deviceId, appVersion, branchId, body.pin))
+        }
     }
 
     post("/auth/refresh") {
-        val device = call.devicePrincipal()
-        call.respondSession(service.refresh(device, call.receive<RefreshRequest>().refreshToken))
+        val deviceId = call.requiredDeviceId()
+        call.respondSession(service.refresh(deviceId, call.receive<RefreshRequest>().refreshToken))
     }
 }
 
@@ -101,6 +111,11 @@ fun Route.authRoutes(service: AuthService) {
         call.respond(service.context(call.staffPrincipal()).toDto())
     }
 }
+
+private const val MAX_APP_VERSION_LENGTH = 32
+
+private fun ApplicationCall.requiredDeviceId(): UUID =
+    Requests.uuid(request.headers[DEVICE_ID_HEADER], DEVICE_ID_HEADER)
 
 /** An unknown or malformed staff id both mean "no staff chosen" (`VerifyStaffPinUseCase`). */
 private fun String?.toUuidOrNull(): UUID? = this?.let { runCatching { UUID.fromString(it) }.getOrNull() }
