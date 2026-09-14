@@ -37,11 +37,13 @@ architecture, conventions, and constraints Claude must follow.
 ```
 src/main/kotlin/id/primawash/api/
   Application.kt      -> entry point: plugins, DI, routing mount
-  plugins/            -> Serialization, StatusPages, Auth, CallLogging, RateLimit
+  plugins/            -> Serialization, StatusPages, Auth, Monitoring, RateLimit, AppVersion,
+                         DependencyInjection (Koin), Routing
   common/             -> ErrorEnvelope, BusinessRuleException, Money, WibClock,
                          Idempotency, Pagination, AuditWriter
   db/                 -> Database.kt (Hikari + Exposed), Tables.kt, tx helpers
-  auth/ branch/ staff/ catalog/ customer/ order/ shift/ wa/ report/ sync/
+  auth/ device/ branch/ staff/ catalog/ customer/ order/ shift/ wa/ report/ sync/
+  tools/              -> CLI entry points: SeedPilot, IssueActivationCode
 src/main/resources/db/migration/   -> V1__init.sql, V2__…
 ```
 
@@ -261,6 +263,7 @@ touching a related area, check the PRD section named here.
 ./gradlew run -Pworker        # WhatsApp worker + scheduler (final phase only)
 ./gradlew flywayMigrate
 ./gradlew seedPilot           # dev/staging only
+./gradlew issueActivationCode -Pbranch=TBT   # code for the first tablet (container: bin/pwl-activation-code)
 ./gradlew test
 ./gradlew integrationTest     # Testcontainers Postgres
 ./gradlew contractTest        # validate against openapi.yaml
