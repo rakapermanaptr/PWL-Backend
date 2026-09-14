@@ -37,7 +37,7 @@ setiap respons divalidasi terhadapnya. Kode/pesan yang belum ada di PRD dicatat 
 | Milestone | Isi | Status |
 |---|---|---|
 | M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | ✅ staging aktif, skema V2 di `main` |
-| M1 Identitas & master data | Aktivasi perangkat, PIN login, cabang, staff, price list, loyalty, reward, customer, audit | 🔨 selesai di `development`, belum di staging |
+| M1 Identitas & master data | Login PIN tanpa aktivasi, cabang, staff, price list, loyalty, reward, customer, audit | 🔨 selesai di `development`, belum di staging |
 | M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | ⬜ |
 | M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | ⬜ |
 | M4 Shadow mode | Dry-run 3–5 hari paralel dengan SaaS lama + UAT (belum mengirim WA) | ⬜ |
@@ -201,7 +201,8 @@ wajib diganti sebelum go-live.
 
 ### Login di tablet
 
-Tidak ada langkah aktivasi (keputusan owner — [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) bagian 0).
+Tidak ada langkah aktivasi (keputusan owner — PRD §12.1 Draft 1.1, [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) bagian 0).
+Panduan lengkap untuk aplikasi Android: [`docs/api-integration.md`](docs/api-integration.md).
 Aplikasi membuat UUID instalasi saat pertama dibuka dan mengirimnya sebagai `X-Device-Id`; alurnya
 `GET /api/v1/login-options` → pilih cabang → `POST /api/v1/auth/pin-login` → access token.
 
@@ -436,5 +437,6 @@ Langkah 2 memakai migrasi/skrip operasional sekali pakai, bukan `UPDATE` manual 
 | Aplikasi klien Android | `~/AndroidStudioProjects/PrimaWash` |
 | Desain v2 multi-cabang | `~/Website/prima-wash-laundry` |
 | Hak akses database & operasional | [`docs/ops/database-roles.md`](docs/ops/database-roles.md) |
+| **Panduan integrasi API untuk tim Android** | [`docs/api-integration.md`](docs/api-integration.md) |
 | Celah PRD yang diisi di M1 (untuk PRD & tim Android) | [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) |
 | Panduan kerja untuk Claude | [`CLAUDE.md`](CLAUDE.md) |

@@ -10,7 +10,8 @@ adanya; hanya yang benar-benar belum ada yang didrafkan baru.
 
 ## 0. Keputusan owner: login tanpa aktivasi perangkat (14 September 2026)
 
-**Mengubah PRD §8.1 dan §12.1.** Pengguna tablet adalah owner lanjut usia dan kasir yang tidak boleh
+**Sudah diterapkan ke PRD Draft 1.1** (§6.1, §7.2 `devices`, §8.1, §12.1, §12.2, §14 A3, Lampiran B
+`DEVICE_UNAUTHORIZED`). Bagian lain dokumen ini masih menunggu disalin ke PRD. Pengguna tablet adalah owner lanjut usia dan kasir yang tidak boleh
 direpotkan langkah teknis, jadi alurnya cukup **pilih cabang → ketik PIN → masuk**. Tidak ada kode
 aktivasi dan tidak ada token perangkat.
 

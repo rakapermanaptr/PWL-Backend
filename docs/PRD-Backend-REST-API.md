@@ -3,8 +3,9 @@
 | | |
 |---|---|
 | **Dokumen** | Product Requirements Document — Backend & REST API v1 |
-| **Status** | Draft 1.0 — siap direview tim backend |
-| **Tanggal** | 11 September 2026 |
+| **Status** | Draft 1.1 — siap direview tim backend |
+| **Tanggal** | 11 September 2026 · revisi 14 September 2026 |
+| **Perubahan 1.1** | Login tanpa aktivasi perangkat: layar login publik, "pilih cabang → ketik PIN"; tablet dikenali dari ID instalasi (`X-Device-Id`). Keputusan owner — lihat §12.1 dan `docs/prd-gaps-m1.md` di repo backend |
 | **Klien** | Aplikasi Android `Prima Wash` (tablet, landscape) — repo ini |
 | **Sumber analisis** | Kode `:domain` (model, repository, use case), `:data` (Room, seeder), seluruh `:feature:*`; PRD produk *Sistem Kasir, Loyalty & WhatsApp* v1 (29 Agustus 2026); desain *Kasir Prima Laundry* v2 multi-cabang |
 | **Pemilik produk** | Raka |
@@ -74,7 +75,7 @@ Temuan ini berasal dari membaca kode, bukan dari PRD produk. Masing-masing punya
 
 | # | Temuan | Dampak | Solusi di dokumen ini |
 |---|---|---|---|
-| T1 | PIN di-hash **SHA-256 dengan salt statis** (`"primawash:$pin"`). Ruang PIN 4 digit = 10.000 kombinasi → hash bisa dibalik dalam milidetik. | Kebocoran DB = semua PIN bocor | §12.2: HMAC + pepper untuk lookup, Argon2id untuk verifikasi, rate limit, device binding |
+| T1 | PIN di-hash **SHA-256 dengan salt statis** (`"primawash:$pin"`). Ruang PIN 4 digit = 10.000 kombinasi → hash bisa dibalik dalam milidetik. | Kebocoran DB = semua PIN bocor | §12.2: HMAC + pepper untuk lookup, Argon2id untuk verifikasi, rate limit per tablet, per akun & per alamat jaringan |
 | T2 | Login **hanya dengan PIN** (tanpa pilih nama), jadi PIN harus unik di antara staff aktif. `ToggleStaffActiveUseCase` **tidak** mengecek bentrok PIN saat mengaktifkan ulang akun. | Dua staff aktif bisa punya PIN sama → login ambigu | §8.3: aktivasi ulang ditolak bila PIN bentrok; unique index parsial |
 | T3 | `matchesActivePin()` dipakai keypad login untuk submit otomatis. Kalau diekspos sebagai API, ini jadi **oracle tebak PIN**. | Brute force tanpa login gagal tercatat | §8.1 & §14 (A5): endpoint ini tidak disediakan |
 | T4 | Format ID order `KODE-MMdd-SEQ` **tanpa tahun** → `TBT-0829-015` tahun 2026 bentrok dengan 2027. | Primary key bentrok setelah 1 tahun | §7.3: `id` UUID + `number` tampilan, unik per (cabang, tanggal bisnis) |
@@ -205,7 +206,7 @@ Kontrak API di dokumen ini tidak bergantung pada stack. Rekomendasi untuk tim ke
 | Paginasi | Cursor: `?limit=50&cursor=<opaque>` → `{ "items": [...], "nextCursor": "..." \| null }` |
 | Idempotensi | Header `Idempotency-Key: <uuid>` **wajib** untuk `POST /orders`, `POST /orders/sync`, `POST /shifts`, `POST /shifts/{id}/cash-entries`, `POST /shifts/{id}/close`. Kunci yang sama + body sama → respons yang sama; body berbeda → `409 IDEMPOTENCY_MISMATCH`. Disimpan 7 hari |
 | Konkurensi | Resource yang bisa diubah dua perangkat membawa `version`; update mengirim `expectedVersion` atau status asal → `409` bila berubah |
-| Versi aplikasi | Header `X-App-Version` dan `X-Device-Id` di setiap request; server bisa menolak versi lama dengan `426 APP_UPDATE_REQUIRED` |
+| Versi aplikasi | Header `X-App-Version` dan `X-Device-Id` di setiap request; server bisa menolak versi lama dengan `426 APP_UPDATE_REQUIRED`. `X-Device-Id` = UUID instalasi yang dibuat aplikasi saat pertama dibuka (wajib di `pin-login` & `refresh`) |
 
 ### 6.2 Format error
 
@@ -282,8 +283,7 @@ Semua tabel punya `created_at`, `updated_at` (UTC) kecuali disebut lain. Uang = 
 | last_login_at | timestamptz null | |
 | sort_order | int | |
 
-**devices** — `id, name, platform, app_version, last_branch_id, token_hash, activated_by, activated_at, last_seen_at, pending_count, revoked_at`
-**device_activation_codes** — `code_hash, created_by, expires_at (24 jam), used_at, used_by_device`
+**devices** — `id (= X-Device-Id), name, platform, app_version, last_branch_id, activated_at (pertama terlihat), last_seen_at, pending_count, pin_locked_until, revoked_at` — dicatat otomatis pada percobaan login pertama; tidak ada token maupun kode aktivasi (§12.1)
 **sessions** — `id, device_id, staff_id, branch_id, refresh_token_hash, created_at, expires_at, revoked_at`
 
 **customers**
@@ -412,19 +412,17 @@ diubah — ini yang menjamin "rate baru hanya berlaku untuk transaksi berikutnya
 
 ## 8. Spesifikasi endpoint
 
-Notasi akses: **D** = token perangkat, **K** = staff kasir, **O** = owner, **Pub** = publik (tanpa token, dengan
-verifikasi khusus). Semua endpoint K/O otomatis dibatasi ke cabang token untuk kasir.
+Notasi akses: **K** = staff kasir, **O** = owner, **Pub** = publik (tanpa token, dengan verifikasi khusus).
+Semua endpoint K/O otomatis dibatasi ke cabang token untuk kasir.
 
 ### 8.1 Perangkat & autentikasi
 
 | Method & path | Akses | Fungsi | Use case klien |
 |---|---|---|---|
-| `POST /devices/activate` | Pub | Tukar kode aktivasi → token perangkat | *(baru)* |
-| `POST /devices/activation-codes` | O | Buat kode aktivasi 8 karakter, berlaku 24 jam | *(baru)* |
-| `GET /devices` · `DELETE /devices/{id}` | O | Daftar & cabut perangkat | *(baru)* |
-| `GET /login-options` | D | Cabang + nama kasir aktif + status shift untuk layar login | `LoginViewModel` |
-| `POST /auth/pin-login` | D | Login PIN di cabang perangkat | `LoginWithPinUseCase` |
-| `POST /auth/refresh` | D | Perpanjang sesi | *(baru)* |
+| `GET /devices` · `DELETE /devices/{id}` | O | Daftar tablet yang pernah login & blokir tablet hilang | *(baru)* |
+| `GET /login-options` | Pub | Cabang + nama kasir aktif + status shift untuk layar login | `LoginViewModel` |
+| `POST /auth/pin-login` | Pub (`X-Device-Id`) | Login PIN di cabang yang dipilih | `LoginWithPinUseCase` |
+| `POST /auth/refresh` | Pub (`X-Device-Id`) | Perpanjang sesi | *(baru)* |
 | `POST /auth/verify-pin` | K/O | Verifikasi PIN staff tertentu → `staffProof` sekali pakai (5 menit) | `VerifyStaffPinUseCase` |
 | `POST /auth/switch-staff` | K/O | Serahkan perangkat ke staff lain (PIN) → token baru | `SwitchActiveStaffUseCase` |
 | `POST /auth/switch-branch` | O | Pindah konteks cabang perangkat → token baru | `SwitchBranchUseCase` |
@@ -437,7 +435,7 @@ menebak PIN tanpa tercatat sebagai login gagal (T3).
 #### `POST /auth/pin-login`
 
 ```json
-// Request  (Authorization: Bearer <deviceToken>)
+// Request  (tanpa Authorization; header X-Device-Id: <UUID instalasi>)
 { "branchId": "b1…", "pin": "1234" }
 
 // 200
@@ -458,13 +456,18 @@ Aturan (urutan pengecekan sama dengan `LoginWithPinUseCase`):
 | Cabang tidak ada | 422 `BRANCH_REQUIRED` | Pilih cabang perangkat dulu. | false |
 | Cabang nonaktif | 422 `BRANCH_INACTIVE` | Cabang {nama} sedang nonaktif — pilih cabang lain atau hubungi owner. | false |
 | PIN < 4 atau > 6 digit / bukan angka | 422 `PIN_FORMAT` | PIN minimal 4 digit. | false |
+| Tablet diblokir owner | 401 `DEVICE_UNAUTHORIZED` | Tablet ini sudah diblokir owner — hubungi owner untuk memakai tablet lain. | — |
 | PIN tidak cocok | 422 `PIN_UNKNOWN` | PIN tidak dikenali. Coba lagi atau minta owner reset PIN. | true |
 | Akun nonaktif | 422 `STAFF_INACTIVE` | Akun {nama} nonaktif — PIN lama sudah diblokir. | true |
 | Kasir di cabang lain | 422 `STAFF_WRONG_BRANCH` | {nama} terdaftar di Cabang {asal} — tidak bisa login di perangkat Cabang {cabang}. | true |
 | Terlalu banyak gagal | 423 `PIN_LOCKED` | Terlalu banyak PIN salah. Coba lagi dalam {n} menit. | true |
 
-Efek: `staff.last_login_at`, sesi baru, `devices.last_branch_id`, audit
-`"Login PIN sebagai kasir Tebet di perangkat Cabang Tebet"` / `"… sebagai owner/admin …"`.
+`X-Device-Id` wajib (tanpa header → 400). Tablet terkunci setelah 5 PIN salah dalam 5 menit (`423`); maksimal 20
+percobaan per alamat jaringan per 5 menit (`429`).
+
+Efek: `staff.last_login_at`, sesi baru (sesi lain di tablet yang sama berakhir), `devices.last_branch_id`, audit
+`"Login PIN sebagai kasir Tebet di perangkat Cabang Tebet"` / `"… sebagai owner/admin …"`, dan pada login pertama
+sebuah tablet audit `DEVICE_ACTIVATED` `"Tablet baru dipakai login pertama kali di Cabang Tebet"`.
 
 #### `POST /auth/verify-pin` → dipakai layar Kas sebelum buka shift
 
@@ -791,7 +794,7 @@ nama}"` / `"Follow up manual via telepon: {nama}"`. Respons `{ "resolved": n }`.
 |---|---|---|
 | `GET /sync/bootstrap` | K/O | Snapshot awal: cabang, staff (field publik), layanan, reward, rate, customer, order aktif cabang, shift terakhir, WA gagal |
 | `GET /sync/changes?since=<cursor>` | K/O | Perubahan sejak cursor per koleksi → `{ changes: { branches: [...], services: [...], … }, nextCursor, hasMore }` |
-| `POST /devices/heartbeat` | D/K/O | `{ pendingCount, appVersion, online }` tiap 60 detik — dipakai `pendingSync` di dashboard |
+| `POST /devices/heartbeat` | K/O (`X-Device-Id`) | `{ pendingCount, appVersion, online }` tiap 60 detik — dipakai `pendingSync` di dashboard |
 
 Cursor berbasis `updated_at` + id (monoton). Klien memanggil `changes` saat app aktif (tiap 15–30 detik) dan setelah
 setiap mutasi, lalu menulis ke Room sehingga `Flow` di UI ikut terbarui. Server-Sent Events untuk push real-time
@@ -969,12 +972,15 @@ Aturan server (memperbaiki T5):
 
 ### 12.1 Model autentikasi
 
-1. **Aktivasi perangkat.** Owner membuat kode aktivasi (atau lewat CLI server untuk perangkat pertama). Tablet
-   menukar kode → `deviceToken` (acak 256-bit; yang disimpan server hanya hash-nya). Token disimpan terenkripsi di
-   tablet. Owner bisa mencabut perangkat kapan saja.
-2. **Sesi staff.** Login PIN butuh `deviceToken` yang valid, sehingga PIN yang bocor tidak bisa dipakai dari luar
-   tablet terdaftar. Hasilnya access token JWT (60 menit, claim `sub`, `role`, `branchId`, `deviceId`, `sid`) dan
-   refresh token (18 jam — satu hari operasional; dirotasi setiap dipakai).
+1. **Tanpa aktivasi perangkat** *(revisi 1.1, keputusan owner 14 September 2026)*. Pengguna tablet adalah owner
+   lanjut usia dan kasir non-teknis, jadi layar login cukup "pilih cabang → ketik PIN". Aplikasi membuat UUID
+   instalasi saat pertama dibuka, menyimpannya permanen, dan mengirimnya sebagai `X-Device-Id`; server mencatat
+   tablet pada percobaan login pertamanya. ID ini dipakai untuk kunci PIN per tablet, satu sesi per tablet,
+   refresh yang terikat ke tablet, dan pemblokiran tablet hilang oleh owner. *Konsekuensi yang diterima:* login PIN
+   bisa dicoba dari luar tablet toko; mitigasinya batas percobaan per alamat jaringan (§12.2) dan PIN owner 6 digit.
+2. **Sesi staff.** Login PIN menghasilkan access token JWT (60 menit, claim `sub`, `role`, `branchId`, `deviceId`,
+   `sid`) dan refresh token (18 jam sejak login — satu hari operasional; dirotasi setiap dipakai, tidak
+   memperpanjang sesi). Sesi dicek ulang ke database di setiap request.
 3. **Sesi bertahan saat app ditutup** (sekarang di memori — README "Status"). PIN diminta lagi setelah logout,
    refresh token habis, ganti staff, atau akun dinonaktifkan/di-reset.
 
@@ -984,8 +990,10 @@ Aturan server (memperbaiki T5):
 - `pin_lookup = HMAC-SHA256(PIN_PEPPER, pin)` untuk mencari staff dari PIN (login tanpa pilih nama), dengan unique
   index parsial pada staff aktif. `PIN_PEPPER` di secret manager, tidak di database.
 - `pin_hash = Argon2id(pin)` untuk verifikasi akhir.
-- Karena ruang PIN kecil, perlindungan utama adalah **rate limit + device binding**:
-  - per perangkat: 5 PIN salah dalam 5 menit → kunci 5 menit (`423`);
+- Karena ruang PIN kecil, perlindungan utama adalah **rate limit**:
+  - per tablet (`X-Device-Id`): 5 PIN salah dalam 5 menit → kunci 5 menit (`423`);
+  - per alamat jaringan: maksimal 20 percobaan `pin-login` per 5 menit (`429`) — karena ID instalasi bisa
+    dikarang ulang;
   - per akun (`verify-pin`, `switch-staff`): 5 salah berturut-turut → kunci 15 menit + audit `PIN_LOCKED`;
   - semua gagal login tercatat di audit (tanpa PIN).
 - Hash SHA-256 lama dari perangkat **tidak dimigrasi**; PIN pilot dibuat ulang lewat seed/owner.
@@ -1027,7 +1035,7 @@ Bagian ini untuk perencanaan tim Android. Library baru (mis. penyimpanan terenkr
 |---|---|---|
 | A1 | Repository menjadi *remote + cache Room*; interface `:domain` tetap, implementasi baru di `:data/remote` memakai `safeRequest` | `data/repository/*`, `data/remote/*` |
 | A2 | Aturan bisnis di use case tetap untuk tampilan, tetapi hasil server yang disimpan | `domain/usecase/*` |
-| A3 | Layar aktivasi perangkat (baru) + penyimpanan `deviceToken` | `:feature:auth` |
+| A3 | Buat UUID instalasi saat pertama dibuka, simpan permanen, kirim sebagai `X-Device-Id` di setiap request (tanpa layar aktivasi) | `:data`, `:feature:auth` |
 | A4 | `SessionRepository` menyimpan token secara persisten dan refresh otomatis | `data/repository/Repositories.kt` |
 | A5 | Hapus hashing PIN lokal & auto-submit `matchesActivePin`; submit saat tombol ditekan atau saat 6 digit | `LoginWithPinUseCase`, `LoginViewModel` |
 | A6 | `PendingTransaction` + `clientTxId`, `shiftId`, harga satuan, customer baru; sync pakai `POST /orders/sync` dan lanjut walau ada yang gagal | `PendingTransactionRepository`, `SyncPendingTransactionsUseCase` |
@@ -1049,7 +1057,7 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 | Minggu | Milestone | Isi | Selesai bila |
 |---|---|---|---|
 | 1–2 | **M0 Fondasi** | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, pengajuan verifikasi Meta | Staging hidup; skema lolos review |
-| 3–4 | **M1 Identitas & master data** | Aktivasi perangkat, PIN login/refresh/switch/logout, cabang, staff, price list, loyalty, reward, customer, audit | Login tablet ke staging; semua CRUD owner lolos contract test |
+| 3–4 | **M1 Identitas & master data** | Login PIN tanpa aktivasi, refresh/switch/logout, cabang, staff, price list, loyalty, reward, customer, audit | Login tablet ke staging; semua CRUD owner lolos contract test |
 | 5–7 | **M2 Transaksi** | Order + event layer + nomor order, advance status, shift & kas, sync offline, delta sync, heartbeat | Skenario §16 #1–#10 lolos; uji konkurensi lolos |
 | 8–10 | **M3 WhatsApp** | Outbox, worker, retry, webhook, opt-out STOP, failures API, summary | Pesan nyata terkirim < 2 menit di nomor uji |
 | 11 | **M4 Laporan & impor** | Dashboard, audit filter, impor CSV, error report, hardening, load test, security review | Metrik dashboard cocok dengan hitungan manual |
@@ -1100,7 +1108,7 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 | Q9 | Transaksi offline setelah shift ditutup | Diterima dengan flag dan tampil di laporan (§11.2) | Owner |
 | Q10 | Stack & hosting | Kotlin/Ktor + PostgreSQL terkelola (§5.1) | Tim backend |
 | Q11 | Retensi data (audit, order, payload WA) | Order & audit 5 tahun, payload webhook 30 hari | Owner |
-| Q12 | Pilot 1 cabang vs aplikasi multi-cabang (T12) | Skema multi-cabang; pilot = hanya cabang pilot yang `active` + perangkatnya diaktivasi | Owner |
+| Q12 | Pilot 1 cabang vs aplikasi multi-cabang (T12) | Skema multi-cabang; pilot = hanya cabang pilot yang `active` | Owner |
 
 ---
 
@@ -1127,6 +1135,7 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 | `BRANCH_REQUIRED` | 422 | Pilih cabang perangkat dulu. |
 | `BRANCH_INACTIVE` | 422 | Cabang Cipete sedang nonaktif — pilih cabang lain atau hubungi owner. |
 | `BRANCH_IN_USE` | 422 | Tidak bisa menonaktifkan cabang yang sedang dipakai perangkat ini. |
+| `DEVICE_UNAUTHORIZED` | 401 | Tablet ini sudah diblokir owner — hubungi owner untuk memakai tablet lain. |
 | `PIN_FORMAT` | 422 | PIN minimal 4 digit. / PIN harus 4–6 digit. |
 | `PIN_UNKNOWN` | 422 | PIN tidak dikenali. Coba lagi atau minta owner reset PIN. |
 | `PIN_WRONG` | 422 | PIN salah untuk Bagas Ardhana. Coba lagi. |

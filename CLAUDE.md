@@ -237,7 +237,8 @@ touching a related area, check the PRD section named here.
 ## Git & Commit Convention
 - Conventional Commits: `feat:`, `fix:`, `refactor:`, `chore:`, `test:`
 - Branch naming: `feature/<name>`, `bugfix/<name>`, `hotfix/<name>`
-- A PR that changes the API surface updates `openapi.yaml` in the same PR.
+- A PR that changes the API surface updates `openapi.yaml` and `docs/api-integration.md`
+  (the Android team's guide) in the same PR.
 
 ## Do
 - Read the relevant PRD section before writing an endpoint — the validation
