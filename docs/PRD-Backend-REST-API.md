@@ -3,9 +3,10 @@
 | | |
 |---|---|
 | **Dokumen** | Product Requirements Document — Backend & REST API v1 |
-| **Status** | Draft 1.1 — siap direview tim backend |
-| **Tanggal** | 11 September 2026 · revisi 14 September 2026 |
+| **Status** | Draft 1.2 — siap direview tim backend |
+| **Tanggal** | 11 September 2026 · revisi 14 & 15 September 2026 |
 | **Perubahan 1.1** | Login tanpa aktivasi perangkat: layar login publik, "pilih cabang → ketik PIN"; tablet dikenali dari ID instalasi (`X-Device-Id`). Keputusan owner — lihat §12.1 dan `docs/prd-gaps-m1.md` di repo backend |
+| **Perubahan 1.2** | Celah yang terisi saat implementasi M1–M2 disahkan owner: kode error `STAFF_REQUIRED`, `STAFF_PROOF_INVALID`, `CAPTURED_IN_FUTURE`, `DUPLICATE_TRANSACTION` dan teks pesan transport; bentuk respons semua endpoint M1–M2; cursor delta sync berbasis id transaksi (§8.10); aturan detail sync offline (§11.2); `staffProof` & serah terima tablet saat buka shift (§8.7); rencana rilis dengan integrasi Meta paling akhir (§15). Riwayat keputusan: `docs/prd-gaps-m1.md`, `docs/prd-gaps-m2.md` di repo backend |
 | **Klien** | Aplikasi Android `Prima Wash` (tablet, landscape) — repo ini |
 | **Sumber analisis** | Kode `:domain` (model, repository, use case), `:data` (Room, seeder), seluruh `:feature:*`; PRD produk *Sistem Kasir, Loyalty & WhatsApp* v1 (29 Agustus 2026); desain *Kasir Prima Laundry* v2 multi-cabang |
 | **Pemilik produk** | Raka |
@@ -203,10 +204,11 @@ Kontrak API di dokumen ini tidak bergantung pada stack. Rekomendasi untuk tim ke
 | Kuantitas | Angka desimal dengan maksimal 1 angka di belakang koma, kelipatan `step` layanan: `4.5` |
 | ID | UUID string; nomor order tampilan di field terpisah `number` |
 | Enum | Huruf besar, sama dengan klien: `DITERIMA`, `TUNAI`, `KILOAN_REGULER`, … (Lampiran A) |
+| Nilai kosong | Dikirim sebagai `null`, bukan field dihilangkan |
 | Paginasi | Cursor: `?limit=50&cursor=<opaque>` → `{ "items": [...], "nextCursor": "..." \| null }` |
-| Idempotensi | Header `Idempotency-Key: <uuid>` **wajib** untuk `POST /orders`, `POST /orders/sync`, `POST /shifts`, `POST /shifts/{id}/cash-entries`, `POST /shifts/{id}/close`. Kunci yang sama + body sama → respons yang sama; body berbeda → `409 IDEMPOTENCY_MISMATCH`. Disimpan 7 hari |
+| Idempotensi | Header `Idempotency-Key: <uuid>` **wajib** untuk `POST /orders`, `POST /orders/sync`, `POST /shifts`, `POST /shifts/{id}/cash-entries`, `POST /shifts/{id}/close`. Kunci yang sama + body sama → respons yang sama; body berbeda → `409 IDEMPOTENCY_MISMATCH`; tanpa kunci → `400`. Kunci dicakup per perangkat dan per endpoint. Disimpan 7 hari. Respons yang diputar ulang tidak pernah berisi token |
 | Konkurensi | Resource yang bisa diubah dua perangkat membawa `version`; update mengirim `expectedVersion` atau status asal → `409` bila berubah |
-| Versi aplikasi | Header `X-App-Version` dan `X-Device-Id` di setiap request; server bisa menolak versi lama dengan `426 APP_UPDATE_REQUIRED`. `X-Device-Id` = UUID instalasi yang dibuat aplikasi saat pertama dibuka (wajib di `pin-login` & `refresh`) |
+| Versi aplikasi | Header `X-App-Version` dan `X-Device-Id` di setiap request; server bisa menolak versi lama dengan `426 APP_UPDATE_REQUIRED`. `X-Device-Id` = UUID instalasi yang dibuat aplikasi saat pertama dibuka (wajib di `pin-login` & `refresh`; di endpoint ber-sesi opsional, tetapi bila dikirim harus sama dengan tablet sesi → selain itu `401`) |
 
 ### 6.2 Format error
 
@@ -230,13 +232,15 @@ agar UX tidak berubah.
 | `400 VALIDATION_ERROR` | Body tidak valid secara format (field hilang, tipe salah). `details.fields` berisi daftar field |
 | `401 UNAUTHENTICATED` / `TOKEN_EXPIRED` | Token tidak ada, salah, atau kedaluwarsa |
 | `403 FORBIDDEN` / `BRANCH_SCOPE` | Role tidak cukup, atau kasir mengakses cabang lain |
-| `404 NOT_FOUND` | Resource tidak ada (pesan: "Order TBT-0829-015 tidak ditemukan.") |
+| `404 NOT_FOUND` | Resource tidak ada (pesan: "Order tidak ditemukan." — permintaan memakai `id`, jadi nomornya tidak diketahui) |
 | `409 CONFLICT` | Bentrok status/versi/duplikat (mis. `STATUS_CHANGED`, `PRICE_CHANGED`, `PHONE_ALREADY_REGISTERED`, `SHIFT_ALREADY_OPEN`) |
 | `422 BUSINESS_RULE` | Aturan bisnis dilanggar; `code` spesifik (Lampiran B) |
 | `423 PIN_LOCKED` | Terlalu banyak PIN salah; header `Retry-After` |
 | `426 APP_UPDATE_REQUIRED` | Versi aplikasi terlalu lama |
-| `429 RATE_LIMITED` | Rate limit umum |
+| `429 RATE_LIMITED` | Rate limit umum (120/menit per perangkat) atau 20 percobaan `pin-login` per alamat jaringan per 5 menit; header `Retry-After` |
 | `5xx` | Kesalahan server — klien memperlakukannya sebagai *retryable* (sesuai `AppError.isRetryable`) |
+
+Teks pesan kode transport ada di Lampiran B bagian "Kode transport".
 
 ---
 
@@ -337,7 +341,7 @@ diubah — ini yang menjamin "rate baru hanya berlaku untuk transaksi berikutnya
 | captured_at | timestamptz | waktu transaksi di perangkat (untuk offline ≠ waktu diterima server) |
 | created_at | timestamptz | waktu diterima server |
 | status_changed_at | timestamptz | |
-| flags | text[] | mis. `LATE_AFTER_SHIFT_CLOSE`, `PRICE_MISMATCH` |
+| flags | text[] | hanya `OFFLINE_SYNC`: `LATE_AFTER_SHIFT_CLOSE`, `PRICE_MISMATCH`, `SERVICE_INACTIVE`, `STALE_CAPTURE`, `CUSTOMER_PHONE_MATCHED` (dikunci CHECK; flag baru = migrasi baru) |
 | version | int | optimistic locking |
 
 **order_items** — `id, order_id, position, service_id, name, qty, unit, unit_price, subtotal` (semua snapshot)
@@ -378,6 +382,8 @@ diubah — ini yang menjamin "rate baru hanya berlaku untuk transaksi berikutnya
 | resolution | enum `NONE`,`RESENT`,`MANUAL_CALL` | tindak lanjut kasir |
 | resolved_by, resolved_at | uuid, timestamptz | |
 | queued_at, sent_at, delivered_at, failed_at | timestamptz | untuk metrik < 2 menit |
+
+Unique index parsial `(order_id) WHERE template = 'REMINDER_3_HARI'` menjamin pengingat maksimal satu per order.
 
 **audit_log** (append-only — role DB aplikasi tidak punya hak `UPDATE`/`DELETE`)
 
@@ -465,6 +471,14 @@ Aturan (urutan pengecekan sama dengan `LoginWithPinUseCase`):
 `X-Device-Id` wajib (tanpa header → 400). Tablet terkunci setelah 5 PIN salah dalam 5 menit (`423`); maksimal 20
 percobaan per alamat jaringan per 5 menit (`429`).
 
+- Kunci per tablet menghitung **semua penolakan setelah PIN dievaluasi** (`PIN_UNKNOWN`, `STAFF_INACTIVE`,
+  `STAFF_WRONG_BRANCH`, `PIN_WRONG`) — dua penolakan terakhir juga membocorkan bahwa PIN itu milik akun. Percobaan yang
+  ditolak karena tablet sedang terkunci tidak diaudit ulang (kunci tidak diperpanjang terus).
+- Percobaan yang memicu kunci tetap mendapat error aslinya; `423` baru di percobaan berikutnya (§16 #14).
+- Kunci akun (§12.2) juga berlaku di sini: PIN benar untuk akun yang sedang terkunci → `423`. Counter akun hanya
+  bertambah di `verify-pin`/`switch-staff`, karena PIN salah tanpa pilih nama tidak bisa diatribusikan ke akun.
+- `STAFF_WRONG_BRANCH` menyebut nama pemilik PIN seperti klien sekarang.
+
 Efek: `staff.last_login_at`, sesi baru (sesi lain di tablet yang sama berakhir), `devices.last_branch_id`, audit
 `"Login PIN sebagai kasir Tebet di perangkat Cabang Tebet"` / `"… sebagai owner/admin …"`, dan pada login pertama
 sebuah tablet audit `DEVICE_ACTIVATED` `"Tablet baru dipakai login pertama kali di Cabang Tebet"`.
@@ -477,21 +491,41 @@ sebuah tablet audit `DEVICE_ACTIVATED` `"Tablet baru dipakai login pertama kali 
 { "staff": { … }, "staffProof": "sp_…", "expiresIn": 300 }
 ```
 
-Aturan (`VerifyStaffPinUseCase`): staff wajib dipilih ("Pilih staff dulu."), aktif, boleh bekerja di cabang token,
-PIN ≥ 4 digit, PIN cocok ("PIN salah untuk {nama}. Coba lagi."). Gagal dihitung ke lockout akun.
+Aturan (`VerifyStaffPinUseCase`), berurutan: staff wajib dipilih dan dikenal (`STAFF_REQUIRED` "Pilih staff dulu."),
+aktif (`STAFF_INACTIVE` "Akun {nama} nonaktif — PIN lama tidak bisa dipakai."), boleh bekerja di cabang token
+(`STAFF_WRONG_BRANCH`), PIN ≥ 4 digit (`PIN_FORMAT`), akun tidak terkunci (`423`), PIN cocok (`PIN_WRONG` "PIN salah
+untuk {nama}. Coba lagi."). Gagal dihitung ke lockout akun. `staffProof` disimpan sebagai hash (`staff_proofs`), terikat
+ke tablet & cabang sesi, sekali pakai, berlaku 5 menit — dipakai `POST /shifts` (§8.7).
 
 #### `POST /auth/switch-staff`
 
 Body `{ "staffId", "pin" }` → validasi seperti `verify-pin`, lalu menerbitkan token untuk staff tsb di cabang yang
 sama, audit `"Login PIN sebagai {kasir Tebet | owner/admin}"`. Klien menerima `context` baru; jika staff baru kasir,
-klien keluar dari layar owner (`ShellEffect.CashierTookOver`).
+klien keluar dari layar owner (`ShellEffect.CashierTookOver`). Respons sama dengan `pin-login`. `switch-staff` tidak
+menolak cabang nonaktif (hanya login & buka shift yang ditolak, §8.2), agar serah terima di shift yang sedang
+diselesaikan tetap bisa.
 
 #### `POST /auth/switch-branch` (owner)
 
 Body `{ "branchId" }`. Aturan: pemanggil owner (kasir → 403 dengan pesan "Perangkat kasir terikat ke Cabang {nama}.
 Hanya owner/admin yang bisa memindahkan perangkat ke cabang lain."), cabang ada, cabang aktif ("Cabang {nama}
 nonaktif — aktifkan dulu di halaman Cabang sebelum memindahkan perangkat."). Bila cabang berbeda → token baru +
-audit `"Pindah konteks perangkat ke Cabang {nama}"`.
+audit `"Pindah konteks perangkat ke Cabang {nama}"`. Respons `{ changed, accessToken, accessTokenExpiresIn, refreshToken,
+refreshTokenExpiresIn, context }`; token `null` bila cabang sama (`changed: false`).
+
+#### `POST /auth/refresh`, `POST /auth/logout`, perangkat
+
+- `refresh` — header `X-Device-Id` + `{ "refreshToken" }` → bentuk yang sama dengan `pin-login` (termasuk `context`).
+  Refresh token dirotasi dan hanya berlaku dari tablet yang sama; sesi tetap berakhir 18 jam sejak login.
+- `logout` → `{ "lastBranchId" }`, audit `"Logout dari perangkat Cabang {nama}"`.
+- Satu tablet, satu sesi staff: login PIN, `switch-staff`, atau serah terima saat buka shift mencabut sesi lain di
+  tablet yang sama.
+- `GET /devices` → `{ items: [{ id, name, platform, appVersion, lastBranchId, firstSeenAt, lastSeenAt, pendingCount,
+  revokedAt }] }` — hanya tablet yang pernah berhasil login, supaya ID instalasi karangan tidak memenuhi daftar.
+- `DELETE /devices/{id}` → `{ device, changed }`, audit `DEVICE_REVOKED` `"Blokir perangkat {nama}"`. Owner boleh
+  memblokir tablet yang sedang ia pakai (sesinya ikut berakhir).
+- Audit lain: `LOGIN_FAILED` `"PIN ditolak di perangkat Cabang {nama} — {KODE}"`; `PIN_LOCKED` `"Perangkat {nama}
+  dikunci 5 menit — 5 PIN salah dalam 5 menit"` / `"Akun {nama} dikunci 15 menit — 5 PIN salah berturut-turut"`.
 
 #### `GET /login-options`
 
@@ -518,12 +552,14 @@ Hanya menampilkan nama pendek kasir aktif — **tidak pernah** mengirim hash PIN
 `PATCH /branches/{id}` — body `{ "dailyTarget"?: 5500000, "active"?: false }`:
 
 - `dailyTarget` ≤ 0 → 422 `TARGET_REQUIRED` "Target harian tidak boleh kosong — dikembalikan ke {target lama}."
-- Nilai sama → 200 dengan `"changed": false`, tanpa audit.
+- Respons `{ branch, changed }`. Nilai sama → 200 dengan `"changed": false`, tanpa audit.
 - Audit `"Ubah target harian Cabang {nama}: Rp5.200.000 → Rp5.500.000"`.
 - Menonaktifkan cabang yang sedang menjadi konteks perangkat pemanggil → 422 `BRANCH_IN_USE` "Tidak bisa
   menonaktifkan cabang yang sedang dipakai perangkat ini."
 - Cabang nonaktif: login & buka shift baru ditolak; shift yang sudah terbuka boleh diselesaikan dan transaksi offline
   tetap diterima. Audit `"Nonaktifkan Cabang {nama}"` / `"Aktifkan Cabang {nama}"`.
+
+`GET /branches/overview` → `{ date, items: [{ branch, revenue, txCount, targetRatio, latestShift, activeCashiers }] }`.
 
 ### 8.3 Staff
 
@@ -556,6 +592,7 @@ di-log. Audit `"Reset PIN {nama} — PIN lama dicabut"`.
   sudah dipakai staff lain — reset PIN setelah akun diaktifkan." (atau server otomatis reset PIN — lihat §17).
 - **Baru:** menonaktifkan owner aktif terakhir → 422 "Minimal harus ada satu owner aktif."
 - Menonaktifkan akun mencabut semua sesinya. Audit `"Nonaktifkan akun {nama}"` / `"Aktifkan akun {nama}"`.
+- Respons `{ staff, changed }`; nilai sama → `changed: false`, tanpa audit.
 
 ### 8.4 Price list, loyalty & reward
 
@@ -573,18 +610,24 @@ di-log. Audit `"Reset PIN {nama} — PIN lama dicabut"`.
 
 Aturan:
 
+- **Respons:** toggle/ubah → `{ service | reward, changed }`; `PATCH /services/prices` → `{ items: [semua layanan],
+  changedCount }`; `PUT /loyalty/rate` → `{ rate, changed }`. Semua toggle menerima nilai tujuan; nilai sama →
+  `changed: false`, tanpa audit.
 - **Tambah layanan:** nama wajib ("Nama layanan wajib diisi."), harga > 0 ("Harga per unit belum diisi."), nama unik
   tanpa membedakan huruf besar/kecil ("Layanan dengan nama ini sudah ada di price list."). `step` = 0,5 bila
   `unit = "kg"`, selain itu 1. Audit `"Tambah layanan {nama} — Rp{harga}/{unit} ({kategori})"`.
 - **Simpan harga:** semua harga > 0 ("Harga layanan tidak boleh kosong."), satu transaksi DB, satu baris
   `service_price_history` per perubahan, audit per perubahan `"Ubah harga Cuci Setrika: Rp9.500 → Rp10.000 (semua
-  cabang)"` + ringkasan `"Simpan price list — {n} layanan aktif di semua cabang"`. Order yang sudah ada tidak
+  cabang)"` + ringkasan `"Simpan price list — {n} layanan aktif di semua cabang"` (tanpa perubahan → tanpa audit). Order yang sudah ada tidak
   berubah (harga ada di snapshot `order_items`).
 - **Nonaktifkan layanan:** hilang dari POS, order lama tetap utuh.
 - **Rate poin:** `rupiahPerStep` ≥ 1.000 ("Nominal belanja minimal Rp1.000."), `pointsPerStep` ≥ 1 ("Poin didapat
-  minimal 1."). Disimpan sebagai baris baru `loyalty_rates` dengan `effective_from = now()`.
-- **Reward:** nama wajib, `cost` dan `value` > 0 ("Poin dan nilai diskon wajib diisi."), `note` default
-  `"Setara Rp{value}"`.
+  minimal 1."). Disimpan sebagai baris baru `loyalty_rates` dengan `effective_from = now()`; rate yang sama dengan rate
+  aktif tidak menyisipkan baris baru. Audit `"Simpan pengaturan loyalty — Rp10.000 = 100 poin, berlaku semua cabang"`.
+- **Reward:** nama wajib ("Nama reward wajib diisi."), `cost` dan `value` > 0 ("Poin dan nilai diskon wajib diisi."),
+  `note` default `"Setara Rp{value}"`, `minSubtotal` 0 atau kosong = tanpa minimum (`null`). Audit `"Tambah reward
+  {nama} — 1.000 poin, nilai Rp10.000[ · minimum belanja Rp75.000]"`; toggle `"Nonaktifkan reward {nama} (1.500 poin) —
+  berlaku semua cabang"`. Toggle layanan: `"Nonaktifkan layanan {nama} ({kategori}) — berlaku semua cabang"`.
 
 ### 8.5 Customer & impor
 
@@ -610,7 +653,13 @@ Aturan:
 
 Efek: `phone` disimpan dalam format `0812-3390-4471`, poin 0, kunjungan 0, `opt_in_at` bila opt-in, audit
 `"Daftarkan customer {nama} ({phone}) · opt-in WA: ya|belum"`. Pesan WA `OPT_IN_CONFIRM` dikirim bersama transaksi
-pertamanya (§10.2).
+pertamanya (§10.2). Respons `201 { customer }`; `Customer` = `{ id, name, phone, points, optIn, visits, homeBranchId }`.
+
+`PATCH /customers/{id}` → `{ customer, changed }`. Nama kosong → `NAME_REQUIRED`. Audit `CUSTOMER_UPDATED` `"Ubah nama
+customer {lama} → {baru}"` / `"Ubah opt-in WA customer {nama}: ya"`. Opt-out mengisi `opt_out_at`, membatalkan
+(`CANCELLED`) pesan WA customer yang masih `QUEUED` dalam transaksi yang sama (sama seperti balasan STOP §10.4), audit
+`CUSTOMER_OPTED_OUT`. `GET /customers/{id}/points` → `{ items: [{ id, type, delta, balanceAfter, orderId, staffId,
+createdAt }], nextCursor }`.
 
 **Impor CSV** — aturan persis `ParseCustomerCsvUseCase`:
 
@@ -667,8 +716,9 @@ pertamanya (§10.2).
     "note": "Pisahkan baju putih",
     "subtotal": 45000, "discount": 14000, "total": 31000,
     "rewardName": "Gratis Cuci Kering 2 kg", "redeemedPoints": 1500, "earnedPoints": 300,
-    "payment": "TUNAI", "status": "DITERIMA", "waStatus": "MENUNGGU",
-    "capturedAt": "…", "statusChangedAt": "…", "staffId": "u1…", "source": "ONLINE", "version": 1
+    "rewardId": "r2…", "payment": "TUNAI", "status": "DITERIMA", "waStatus": "MENUNGGU",
+    "capturedAt": "…", "createdAt": "…", "statusChangedAt": "…", "shiftId": "s1…", "staffId": "u1…",
+    "source": "ONLINE", "flags": [], "version": 1
   },
   "customer": { "id": "c1…", "points": 1140, "visits": 19 }
 }
@@ -684,7 +734,13 @@ Validasi berurutan:
 | 4 | Setiap layanan ada & aktif; `qty > 0`, kelipatan `step`, ≤ 999 | 422 `INVALID_ITEM` | Layanan {nama} sudah tidak tersedia. / Jumlah {nama} tidak valid. |
 | 5 | `unitPrice` = harga price list saat ini | 409 `PRICE_CHANGED` | Harga {nama} baru saja diubah owner — cek ulang total sebelum bayar. (`details.services` berisi harga terbaru) |
 | 6 | Reward aktif, customer dipilih, saldo ≥ `cost`, `subtotal ≥ minSubtotal` | 422 `INSUFFICIENT_POINTS` / `REWARD_NOT_ELIGIBLE` | Saldo poin belum cukup untuk reward ini. |
-| 7 | `expectedTotal` = total server | 409 `TOTAL_MISMATCH` | Total berubah — muat ulang keranjang. |
+| 7 | `expectedTotal` = total server | 409 `TOTAL_MISMATCH` | Total berubah — muat ulang keranjang. (`details` = `{ subtotal, discount, total, earnedPoints }` server) |
+
+Pesan tambahan: layanan yang tidak ada sama sekali → `INVALID_ITEM` "Layanan yang dipilih sudah tidak tersedia.";
+reward nonaktif/tidak ada → `REWARD_NOT_ELIGIBLE` "Reward ini sudah tidak tersedia."; `customerId` tidak ada → 404
+"Customer tidak ditemukan.". `clientTxId` yang sudah punya order tetapi `Idempotency-Key` berbeda (aplikasi kehilangan
+kuncinya) → 409 `DUPLICATE_TRANSACTION` "Transaksi ini sudah tersimpan sebagai {nomor} — muat ulang daftar order."
+dengan `details.order`; kunci yang sama memutar ulang respons pertama. Walk-in: `customer = null` di respons.
 
 Perhitungan: §9.1. Efek atomik (satu transaksi DB — setara `OrderRepository.recordSale`):
 
@@ -693,17 +749,20 @@ Perhitungan: §9.1. Efek atomik (satu transaksi DB — setara `OrderRepository.r
 3. Customer: `points_ledger` `EARN` (+earned) dan `REDEEM` (−cost) bila ada; `visits + 1`; cache saldo.
 4. Reward: `used_count + 1`.
 5. Shift: `cash_sales` atau `transfer_sales` += total, `tx_count + 1`, `points_issued += earned`.
-6. Bila `TUNAI`: `cash_entries` `SALE` label `"Pembayaran tunai {number}"`, note = nama customer.
+6. Bila `TUNAI` dan total > 0: `cash_entries` `SALE` label `"Pembayaran tunai {number}"`, note = nama customer.
 7. `daily_sales` (cabang, tanggal bisnis) += total, tx + 1.
 8. Audit `"Transaksi {number} · Rp{total} · {Tunai|Transfer}[ · redeem {cost} poin]"` (+ audit terpisah
-   `REWARD_REDEEMED` untuk laporan redeem).
-9. Outbox WA (§10.2): `OPT_IN_CONFIRM` (transaksi pertama customer opt-in) lalu `STRUK_DIGITAL` (customer opt-in).
+   `REWARD_REDEEMED` `"Redeem {reward} · {cost} poin · {customer} · {number}"` untuk laporan redeem).
+9. Outbox WA (§10.2), hanya bila customer opt-in **saat ini**: `OPT_IN_CONFIRM` sekali per persetujuan (transaksi
+   pertama sejak `opt_in_at` terakhir — opt-out lalu opt-in lagi mendapat konfirmasi baru), lalu `STRUK_DIGITAL`.
+   Baris dikunci per customer sehingga dua order bersamaan tidak sama-sama mengirim konfirmasi.
 
 #### `GET /orders`
 
 Query: `branchId` (kasir: diabaikan, selalu cabang token; owner: kosong + `scope=all` = semua cabang), `status`,
 `q` (cocok `number`, nama customer, atau digit no HP — sama dengan `OrdersState.visible`), `from`/`to` (tanggal
-bisnis; default: order belum `SELESAI` + order 7 hari terakhir), `limit`, `cursor`. Urut `capturedAt` terbaru.
+bisnis; default: order belum `SELESAI` + order 7 hari terakhir), `limit`, `cursor`. Urut `capturedAt` terbaru. Owner
+tanpa `branchId` dan tanpa `scope=all` mendapat cabang sesi tablet. `counts` mengikuti filter yang sama tanpa `status`.
 
 ```json
 { "items": [ { …order… } ], "nextCursor": null,
@@ -714,10 +773,10 @@ bisnis; default: order belum `SELESAI` + order 7 hari terakhir), `limit`, `curso
 
 Body `{ "fromStatus": "PROSES" }`.
 
-- Order tidak ada → 404 "Order {number} tidak ditemukan."
-- Kasir dan order di cabang lain → 403 `BRANCH_SCOPE`.
+- Order tidak ada → 404 "Order tidak ditemukan."
+- Kasir dan order di cabang lain → 403 `BRANCH_SCOPE` "Kasir hanya bisa mengakses data Cabang {nama}.".
 - Status saat ini ≠ `fromStatus` (perangkat lain sudah mengubah) → 409 `STATUS_CHANGED` dengan order terbaru.
-- Status `SELESAI` → 200 `{ "result": "ALREADY_COMPLETED", "order": … }`.
+- Status `SELESAI` → 200 `{ "result": "ALREADY_COMPLETED", "order": …, "notificationQueued": false }`.
 - Transisi hanya maju satu langkah: `DITERIMA → PROSES → SIAP → SELESAI`. Tidak ada mundur atau lompat.
 - Efek: `status`, `status_changed_at`, `version + 1`, `order_events` `STATUS_CHANGED` dengan staff & perangkat.
 - Saat menjadi `SIAP` **dan customer saat ini opt-in** (dicek dari tabel customer, bukan dari `wa_status` lama — T7):
@@ -727,6 +786,16 @@ Body `{ "fromStatus": "PROSES" }`.
 ```json
 { "result": "ADVANCED", "order": { … "status": "SIAP", "waStatus": "MENUNGGU" }, "notificationQueued": true }
 ```
+
+- Menjadi `SIAP` untuk customer yang tidak opt-in / walk-in → `wa_status = BELUM_OPTIN`, tanpa pesan. Setiap
+  perubahan `wa_status` menulis `order_events` `WA_STATUS_CHANGED`.
+- `advance` tidak memakai `Idempotency-Key` — `fromStatus` sudah melindungi dari pengiriman ganda.
+
+#### `GET /orders/{id}` · `GET /orders/next-number`
+
+- `GET /orders/{id}` → `{ order, events: [{ id, type, fromStatus, toStatus, staffId, deviceId, createdAt, payload }] }`,
+  event terlama dulu; kasir hanya cabangnya (`403 BRANCH_SCOPE`).
+- `GET /orders/next-number` → `{ number, businessDate }` (perkiraan, §7.3).
 
 ### 8.7 Shift & kas
 
@@ -746,19 +815,38 @@ Body `{ "fromStatus": "PROSES" }`.
 - Tidak ada shift terbuka (409 `SHIFT_ALREADY_OPEN` "Shift Cabang {nama} masih terbuka — tutup dulu sebelum membuka
   yang baru."). Dijamin unique index parsial walau dua perangkat membuka bersamaan.
 - `openingCash > 0` ("Modal awal belum diisi.").
-- `staffProof` valid dan belum dipakai → staff pembuka = staff pada proof; respons berisi **token sesi baru untuk
-  staff tsb** (setara `sessionRepository.update { staffId = staff.id }`).
+- `staffProof` valid dan belum dipakai (422 `STAFF_PROOF_INVALID` "Verifikasi PIN sudah kedaluwarsa — pilih staff dan
+  masukkan PIN lagi." bila kosong, tidak dikenal, sudah dipakai, kedaluwarsa, dari tablet/cabang lain, atau staff-nya
+  kini nonaktif/pindah cabang) → staff pembuka = staff pada proof. Proof baru ditandai terpakai setelah semua aturan
+  lain lolos, di transaksi yang sama — pembukaan yang ditolak tidak menghanguskannya.
+- Bila staff pada proof **bukan** pemilik sesi tablet, tablet diserahkan kepadanya (setara
+  `sessionRepository.update { staffId = staff.id }`): sesi lama berakhir, respons `session` berisi token baru (bentuk
+  sama dengan `pin-login`), audit `STAFF_SWITCHED`. Bila sama, `session = null`. Respons yang diputar ulang lewat
+  `Idempotency-Key` selalu `session = null`.
+- Respons `201 { shift, session }`.
 - Efek: shift (`counted_cash` awal = modal awal), `cash_entries` `OPENING` "Modal awal shift" / "Diinput {nama}",
   audit `"Buka shift Cabang {nama} · modal awal Rp500.000"`.
 
 `POST /shifts/{id}/cash-entries` — body `{ "direction": "IN" | "OUT", "label": "beli deterjen", "amount": 180000 }`:
 shift terbuka ("Shift Cabang {nama} belum dibuka."), label wajib ("Keterangan wajib diisi untuk audit trail."),
-amount > 0 ("Jumlah belum diisi."). Disimpan dengan label `"Kas masuk — …"` / `"Kas keluar — …"`, amount bertanda,
-note `"Diinput {nama}"`, audit `"Kas keluar Rp180.000 — beli deterjen"`.
+amount > 0 ("Jumlah belum diisi."). Urutan: shift ada (404 "Shift tidak ditemukan.") → kasir hanya cabangnya (403) →
+shift terbuka → label → amount. Disimpan dengan label `"Kas masuk — …"` / `"Kas keluar — …"`, amount bertanda, note
+`"Diinput {nama}"`, audit `"Kas keluar Rp180.000 — beli deterjen"`. Respons `201 { entry, shift }`.
+
+`PUT /shifts/{id}/counted-cash` — body `{ "countedCash": 1600000 }` → `{ shift }`. Hitungan sementara, **tidak
+diaudit** (hitungan final diaudit saat tutup); negatif → 400; shift tertutup → 409 `SHIFT_CLOSED`; tanpa
+`Idempotency-Key` (idempoten secara alami).
 
 `POST /shifts/{id}/close` — body `{ "countedCash": 1624000 }`: shift masih terbuka (409 "Shift Cabang {nama} sudah
 ditutup."); simpan `counted_cash`, hitung rekap (§9.3), isi `closed_at`, `closed_by_staff_id`; audit `"Tutup shift
-Cabang {nama} · kas cocok"` atau `"… · selisih Rp8.000"`. Respons `{ "recap": { "expected", "actual", "diff" } }`.
+Cabang {nama} · kas cocok"` atau `"… · selisih Rp8.000"`. Respons `{ "shift", "recap": { "expected", "actual", "diff" } }`.
+
+**Bentuk `Shift`**: `{ id, branchId, open, openedByStaffId, openedByName, openedAt, closedAt, closedByStaffId,
+openingCash, cashSales, transferSales, txCount, pointsIssued, countedCash, expectedCash, recap, version }` —
+`expectedCash` dihitung saat dibaca (§9.3), `recap` dibekukan saat tutup (`null` selama terbuka). `CashEntry` =
+`{ id, shiftId, kind, label, note, amount, orderId, staffId, createdAt }`. `GET /shifts/current` → `{ shift | null,
+entries }` (shift terakhir, terbuka atau tertutup; entri terlama dulu); `GET /shifts/latest` → `{ items }`;
+`GET /shifts` → `{ items, nextCursor }`, `from`/`to` = tanggal bisnis `openedAt`.
 
 ### 8.8 WhatsApp
 
@@ -792,12 +880,26 @@ nama}"` / `"Follow up manual via telepon: {nama}"`. Respons `{ "resolved": n }`.
 
 | Method & path | Akses | Fungsi |
 |---|---|---|
-| `GET /sync/bootstrap` | K/O | Snapshot awal: cabang, staff (field publik), layanan, reward, rate, customer, order aktif cabang, shift terakhir, WA gagal |
+| `GET /sync/bootstrap` | K/O | Snapshot awal: cabang, staff (field publik), layanan, reward, rate, customer, order aktif cabang, shift terakhir, WA gagal (mulai M5) |
 | `GET /sync/changes?since=<cursor>` | K/O | Perubahan sejak cursor per koleksi → `{ changes: { branches: [...], services: [...], … }, nextCursor, hasMore }` |
 | `POST /devices/heartbeat` | K/O (`X-Device-Id`) | `{ pendingCount, appVersion, online }` tiap 60 detik — dipakai `pendingSync` di dashboard |
 
-Cursor berbasis `updated_at` + id (monoton). Klien memanggil `changes` saat app aktif (tiap 15–30 detik) dan setelah
-setiap mutasi, lalu menulis ke Room sehingga `Flow` di UI ikut terbarui. Server-Sent Events untuk push real-time
+Cursor opaque berbasis **id transaksi database** (*watermark*), bukan `updated_at`. `updated_at = now()` adalah waktu
+*mulai* transaksi: transaksi yang mulai lebih dulu tetapi commit belakangan akan tertinggal di belakang cursor
+`updated_at` dan perubahannya tidak pernah sampai ke tablet. Setiap baris yang disinkron membawa id transaksi penulisnya
+(`change_xid`); cursor = transaksi tertua yang masih berjalan saat server membaca. Akibatnya tidak ada perubahan yang
+hilang, tetapi satu baris kadang terkirim dua kali — **klien wajib upsert** berdasarkan `id`. Transaksi database yang
+sangat lama menahan watermark, jadi transaksi *idle* dipantau di produksi. Klien memanggil `changes` saat app aktif
+(tiap 15–30 detik) dan setelah setiap mutasi, lalu menulis ke Room sehingga `Flow` di UI ikut terbarui.
+
+- Bentuk: `bootstrap` → `{ data: { branches, staff, services, rewards, loyaltyRates, customers, orders, shifts },
+  cursor }`; `changes` → `{ changes: { …koleksi yang sama… }, nextCursor, hasMore }`, maksimal 500 baris per halaman
+  (`hasMore = true` → panggil lagi segera). Staff hanya `{ id, name, shortName, role, branchId, active }`.
+- Scope: order = cabang sesi tablet; staff & shift — kasir: cabangnya (+ owner), owner: semua; cabang, katalog
+  (termasuk nonaktif), rate, dan customer global. Pada skala 10× customer penuh di bootstrap perlu ditinjau ulang.
+- Cursor yang tidak dikenal → 400 "Cursor tidak valid — muat ulang data dari awal (bootstrap)."
+- Heartbeat: `pendingCount` wajib (≥ 0); respons `{ serverTime }` agar tablet bisa mendeteksi jam yang salah sebelum
+  mencap `capturedAt` offline. Tidak diaudit; `online` belum disimpan. Server-Sent Events untuk push real-time
 dicatat sebagai P1.
 
 ---
@@ -923,6 +1025,8 @@ Walk-in (tanpa customer) dan customer belum opt-in tidak pernah dikirimi pesan.
 - Sync otomatis saat koneksi kembali dan manual lewat "Sync sekarang"; kirim urut `capturedAt`, maksimal 50 per
   request.
 - Tutup shift wajib online; klien sync antrean dulu sebelum memanggil `close`.
+- `Idempotency-Key` satu per isi batch: batch yang sama dikirim ulang karena timeout memakai kunci yang sama.
+- Bila `serverTime` heartbeat beda jauh dari jam tablet, peringatkan kasir sebelum mencatat transaksi offline.
 
 ### 11.2 `POST /orders/sync`
 
@@ -957,14 +1061,19 @@ Aturan server (memperbaiki T5):
 |---|---|
 | Duplikasi | `clientTxId` sudah ada → `DUPLICATE` + order yang ada. Klien menghapus dari antrean untuk `CREATED` dan `DUPLICATE` |
 | Kegagalan | Diproses per transaksi; satu gagal tidak menghentikan yang lain. `REJECTED` tetap di antrean klien dengan pesan error |
-| Harga | Pakai `unitPrice` snapshot perangkat (customer sudah membayar harga itu). Beda dengan price list pada `capturedAt` → flag `PRICE_MISMATCH` + audit |
-| Layanan nonaktif | Diterima (snapshot), flag + audit |
+| Harga | Pakai `unitPrice` snapshot perangkat (customer sudah membayar harga itu). Beda dengan price list pada `capturedAt` (dibangun ulang dari `service_price_history`) → flag `PRICE_MISMATCH` + audit. `unitPrice` ≤ 0 → `REJECTED` `INVALID_ITEM` "Harga {nama} tidak valid." |
+| Layanan nonaktif | Diterima (snapshot), flag `SERVICE_INACTIVE` + audit. Layanan yang tidak ada sama sekali atau `qty` tidak valid → `REJECTED` `INVALID_ITEM` |
 | Rate poin | Rate yang berlaku pada `capturedAt` |
-| Shift | Masuk ke `shiftId` bila shift itu masih terbuka; bila sudah ditutup → shift terbuka cabang saat ini; bila tidak ada → tetap ke `shiftId` asal dengan flag `LATE_AFTER_SHIFT_CLOSE` + audit + tampil di laporan owner. Transaksi yang sudah dibayar **tidak pernah ditolak** karena status shift |
-| Waktu | `capturedAt` > sekarang + 5 menit → 422; lebih lama dari 7 hari → diterima dengan flag `STALE_CAPTURE` |
-| Customer baru | Upsert berdasarkan no HP: nomor sudah ada → pakai customer yang ada, flag, `id` klien dipetakan ke `id` server di respons |
+| Shift | Masuk ke `shiftId` bila shift itu masih terbuka; bila sudah ditutup → shift terbuka cabang saat ini; bila tidak ada → tetap ke `shiftId` asal (tanpa `shiftId`: shift terakhir cabang) dengan flag `LATE_AFTER_SHIFT_CLOSE` + audit + tampil di laporan owner. `shiftId` milik cabang lain diabaikan. Transaksi yang sudah dibayar **tidak pernah ditolak** karena status shift — kecuali cabang belum pernah punya shift sama sekali (`REJECTED` `SHIFT_NOT_OPEN`, tidak ada tempat mencatat uangnya). Transaksi yang masuk ke shift tertutup menambah `cash_sales`/`transfer_sales` shift itu, tetapi rekap yang dibekukan tidak berubah |
+| Waktu | `capturedAt` > sekarang + 5 menit → `REJECTED` 422 `CAPTURED_IN_FUTURE` "Waktu transaksi di tablet lebih maju dari jam server — cek jam tablet lalu sync ulang."; lebih lama dari 7 hari → diterima dengan flag `STALE_CAPTURE` |
+| Customer baru | Upsert berdasarkan no HP (aturan nama & nomor sama dengan `POST /customers`): nomor sudah ada → pakai customer yang ada, flag `CUSTOMER_PHONE_MATCHED`, `id` klien dipetakan ke `id` server di `customerIdMapping = { clientId, serverId }`. Nomor baru → customer dibuat dengan `id` klien, audit `CUSTOMER_REGISTERED` |
+| Staff | `staffId` transaksi dipakai sebagai kasir order bila staff itu boleh bekerja di cabang sesi; bila tidak dikenal, staff sesi yang dipakai |
+| Penolakan | Hanya: jam tablet terlalu maju, ada `rewardId` (`REDEEM_OFFLINE`), `items` kosong (`EMPTY_CART`), item tidak valid, `customerId` tidak ada, data customer baru tidak valid, cabang tanpa shift. Format yang salah hanya menolak transaksi itu, bukan satu batch; lebih dari 50 transaksi per request → 400 |
 | Nomor order | Berdasarkan tanggal bisnis `capturedAt` |
-| Audit | Satu entri ringkasan `"Sync {n} transaksi offline Cabang {nama} · Rp{total} · ID {pertama}–{terakhir}"` + entri per transaksi |
+| Audit | Satu entri ringkasan `"Sync {n} transaksi offline Cabang {nama} · Rp{total} · ID {pertama}–{terakhir}"` + entri per transaksi `"Transaksi {nomor} · Rp{total} · {Tunai|Transfer} · offline[ · ditandai: masuk setelah shift ditutup, harga beda dengan price list, …]"` |
+
+Tiap hasil selalu membawa `clientTxId, status, order, error, customerIdMapping` (yang tidak berlaku `null`);
+`error = { code, message }`. Setiap transaksi adalah transaksi database tersendiri.
 
 ---
 
@@ -1047,24 +1156,28 @@ Bagian ini untuk perencanaan tim Android. Library baru (mis. penyimpanan terenkr
 | A12 | Hitung uang fisik: `PUT counted-cash` dengan debounce; tutup shift kirim `countedCash` | `ShiftViewModel` |
 | A13 | Hapus `DatabaseSeeder` di build produksi; data pilot di-seed di server | `data/seed` |
 | A14 | Isi `BASE_URL` per build type (staging/prod) | `data/build.gradle.kts` |
+| A15 | Buka shift: `verify-pin` → `POST /shifts`; ganti semua token bila respons membawa `session` (tablet diserahkan ke pembuka shift) | `OpenShiftUseCase`, `SessionRepository` |
+| A16 | Cache Room dari `GET /sync/bootstrap` + `GET /sync/changes` dengan **upsert** (baris bisa datang dua kali); heartbeat tiap 60 detik | `data/repository/*`, `ShellViewModel` |
 
 ---
 
 ## 15. Rencana rilis backend
 
-Diselaraskan dengan timeline 13 minggu di PRD produk.
+Diselaraskan dengan timeline 13 minggu di PRD produk. **Revisi 1.2: integrasi Meta/WhatsApp dikerjakan paling akhir.**
+Sejak M2 setiap aksi bisnis tetap menulis baris `wa_messages` `QUEUED` di transaksinya (outbox tidak ditunda); yang
+ditunda hanya pengirimnya. M1–M4 termasuk shadow mode berjalan tanpa kredensial Meta, dan tidak ada yang menandai
+pesan terkirim tanpa pengiriman nyata (T6). Verifikasi bisnis Meta, pendaftaran nomor, dan approval template tetap
+diajukan sejak M0 sebagai jalur paralel karena butuh waktu di sisi Meta.
 
 | Minggu | Milestone | Isi | Selesai bila |
 |---|---|---|---|
 | 1–2 | **M0 Fondasi** | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, pengajuan verifikasi Meta | Staging hidup; skema lolos review |
 | 3–4 | **M1 Identitas & master data** | Login PIN tanpa aktivasi, refresh/switch/logout, cabang, staff, price list, loyalty, reward, customer, audit | Login tablet ke staging; semua CRUD owner lolos contract test |
-| 5–7 | **M2 Transaksi** | Order + event layer + nomor order, advance status, shift & kas, sync offline, delta sync, heartbeat | Skenario §16 #1–#10 lolos; uji konkurensi lolos |
-| 8–10 | **M3 WhatsApp** | Outbox, worker, retry, webhook, opt-out STOP, failures API, summary | Pesan nyata terkirim < 2 menit di nomor uji |
-| 11 | **M4 Laporan & impor** | Dashboard, audit filter, impor CSV, error report, hardening, load test, security review | Metrik dashboard cocok dengan hitungan manual |
-| 12 | **M5 Shadow mode** | Dry-run 3–5 hari paralel dengan SaaS lama di staging/prod + UAT | Rekonsiliasi harian cocok; 0 bug kritis |
+| 5–7 | **M2 Transaksi** | Order + event layer + nomor order, advance status, shift & kas, sync offline, delta sync, heartbeat, penulisan outbox WA | Skenario §16 #1–#11 lolos (untuk #8 sampai pesan `QUEUED`); uji konkurensi lolos |
+| 8–9 | **M3 Laporan & impor** | Dashboard, audit filter, impor CSV, error report, hardening, load test, security review | Metrik dashboard cocok dengan hitungan manual |
+| 10 | **M4 Shadow mode** | Dry-run 3–5 hari paralel dengan SaaS lama di staging/prod + UAT, belum mengirim WA | Rekonsiliasi harian cocok; 0 bug kritis |
+| 11–12 | **M5 Integrasi Meta/WhatsApp** | Worker, Cloud API client, retry, webhook, opt-out STOP, failures API, summary, scheduler pengingat; batalkan (`CANCELLED` + audit) antrean `QUEUED` lama sebelum worker dinyalakan | Pesan nyata terkirim < 2 menit di nomor uji; skenario §16 #8, #17, #18 lolos |
 | 13 | **M6 Go-live** | Cutover cabang pilot, monitoring intensif 2 minggu | SLA §13 terpenuhi |
-
----
 
 ## 16. Kriteria penerimaan (skenario uji utama)
 
@@ -1123,6 +1236,9 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 | `PaymentMethod` | `TUNAI`, `TRANSFER` (fase 2: `QRIS`) |
 | `CashEntryKind` | `OPENING`, `CASH_IN`, `CASH_OUT`, `SALE` |
 | `OrderSource` | `ONLINE`, `OFFLINE_SYNC` |
+| `OrderFlag` | `LATE_AFTER_SHIFT_CLOSE`, `PRICE_MISMATCH`, `SERVICE_INACTIVE`, `STALE_CAPTURE`, `CUSTOMER_PHONE_MATCHED` |
+| `OrderEventType` | `CREATED`, `STATUS_CHANGED`, `WA_STATUS_CHANGED` |
+| `SyncResultStatus` | `CREATED`, `DUPLICATE`, `REJECTED` |
 | `PointsLedgerType` | `EARN`, `REDEEM`, `IMPORT`, `ADJUST` |
 | `WaTemplate` | `OPT_IN_CONFIRM`, `STRUK_DIGITAL`, `STATUS_SIAP_DIAMBIL`, `REMINDER_3_HARI` |
 | `WaMessageStatus` | `QUEUED`, `SENDING`, `SENT`, `DELIVERED`, `READ`, `FAILED`, `CANCELLED` |
@@ -1148,6 +1264,8 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 | `LAST_OWNER` | 422 | Minimal harus ada satu owner aktif. |
 | `CASHIER_NEEDS_BRANCH` | 422 | Kasir harus ditempatkan di satu cabang. |
 | `OWNER_ONLY` | 403 | Hanya owner/admin yang bisa memindahkan perangkat ke cabang lain. |
+| `STAFF_REQUIRED` | 422 | Pilih staff dulu. |
+| `STAFF_PROOF_INVALID` | 422 | Verifikasi PIN sudah kedaluwarsa — pilih staff dan masukkan PIN lagi. |
 | `SHIFT_NOT_OPEN` | 422 | Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi. |
 | `SHIFT_ALREADY_OPEN` | 409 | Shift Cabang Tebet masih terbuka — tutup dulu sebelum membuka yang baru. |
 | `SHIFT_CLOSED` | 409 | Shift Cabang Tebet sudah ditutup. |
@@ -1161,6 +1279,8 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 | `INSUFFICIENT_POINTS` | 422 | Saldo poin belum cukup untuk reward ini. |
 | `REWARD_NOT_ELIGIBLE` | 422 | Reward ini butuh minimum belanja Rp75.000. |
 | `REDEEM_OFFLINE` | 422 | Redeem poin butuh koneksi — batalkan redemption atau tunggu online. |
+| `CAPTURED_IN_FUTURE` | 422 | Waktu transaksi di tablet lebih maju dari jam server — cek jam tablet lalu sync ulang. |
+| `DUPLICATE_TRANSACTION` | 409 | Transaksi ini sudah tersimpan sebagai TBT-0915-001 — muat ulang daftar order. |
 | `STATUS_CHANGED` | 409 | Status order sudah diubah dari perangkat lain. |
 | `PHONE_INVALID` | 422 | Nomor WhatsApp belum valid (minimal 10 digit, diawali 08). |
 | `PHONE_ALREADY_REGISTERED` | 409 | Nomor ini sudah terdaftar (bisa dari cabang lain) — pakai pencarian untuk memilihnya. |
@@ -1174,6 +1294,27 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 | `IMPORT_EXCEL` | 422 | File Excel belum didukung — simpan sebagai CSV dari Excel lalu unggah ulang. |
 | `IMPORT_EXPIRED` | 409 | Preview impor kedaluwarsa — unggah ulang file. |
 
+Variasi pesan untuk kode yang sama: `STAFF_INACTIVE` di `verify-pin`/`switch-staff` "Akun {nama} nonaktif — PIN lama
+tidak bisa dipakai."; `INVALID_ITEM` "Layanan yang dipilih sudah tidak tersedia." / "Jumlah {nama} tidak valid." /
+"Harga {nama} tidak valid." (sync); `REWARD_NOT_ELIGIBLE` "Reward ini sudah tidak tersedia."; `NAME_REQUIRED` "Nama
+reward wajib diisi."; `PRICE_REQUIRED` (tambah layanan) "Harga per unit belum diisi."; `SHIFT_NOT_OPEN` (kas) "Shift
+Cabang {nama} belum dibuka."; `BRANCH_INACTIVE` (buka shift) "Cabang {nama} nonaktif — shift baru tidak bisa dibuka
+sampai owner mengaktifkan cabang.".
+
+**Kode transport**
+
+| Code | HTTP | Pesan |
+|---|---|---|
+| `VALIDATION_ERROR` | 400 | Data yang dikirim tidak lengkap atau formatnya salah. (atau pesan spesifik: "Parameter limit harus angka 1–100.", "Cursor tidak valid — muat ulang daftar dari awal.", "Format tanggal harus YYYY-MM-DD.", "Maksimal 50 transaksi per sync.", "Hitungan uang fisik tidak boleh negatif.", "ID customer dari perangkat sudah dipakai customer lain.") |
+| `UNAUTHENTICATED`, `TOKEN_EXPIRED` | 401 | Sesi berakhir — silakan login ulang dengan PIN. |
+| `FORBIDDEN` | 403 | Fitur ini hanya untuk owner/admin. |
+| `BRANCH_SCOPE` | 403 | Kasir hanya bisa mengakses data Cabang Tebet. |
+| `NOT_FOUND` | 404 | Cabang / Akun / Layanan / Reward / Perangkat / Customer / Order / Shift tidak ditemukan. · Rate poin belum diatur. |
+| `IDEMPOTENCY_MISMATCH` | 409 | Permintaan ini memakai Idempotency-Key yang sudah dipakai untuk data lain — buat kunci baru lalu kirim ulang. |
+| `APP_UPDATE_REQUIRED` | 426 | Versi aplikasi Prima Wash sudah terlalu lama — perbarui aplikasi dulu sebelum melanjutkan. (`details.minAppVersion`) |
+| `RATE_LIMITED` | 429 | Terlalu banyak permintaan dari perangkat ini — tunggu sebentar lalu coba lagi. |
+| `INTERNAL_ERROR` | 500 | Terjadi gangguan di server. Coba lagi sebentar lagi. |
+
 ## Lampiran C — `action_type` audit
 
 `LOGIN`, `LOGIN_FAILED`, `PIN_LOCKED`, `LOGOUT`, `STAFF_SWITCHED`, `DEVICE_BRANCH_SWITCHED`, `DEVICE_ACTIVATED`,
@@ -1181,7 +1322,8 @@ Diselaraskan dengan timeline 13 minggu di PRD produk.
 `SHIFT_CLOSED`, `CASH_IN`, `CASH_OUT`, `CUSTOMER_REGISTERED`, `CUSTOMER_OPTED_OUT`, `CUSTOMERS_IMPORTED`,
 `SERVICE_ADDED`, `SERVICE_PRICE_CHANGED`, `SERVICE_TOGGLED`, `LOYALTY_RATE_CHANGED`, `REWARD_ADDED`,
 `REWARD_TOGGLED`, `STAFF_ADDED`, `STAFF_PIN_RESET`, `STAFF_TOGGLED`, `BRANCH_TARGET_CHANGED`, `BRANCH_TOGGLED`,
-`WA_RESENT`, `WA_MANUAL_FOLLOW_UP`.
+`WA_RESENT`, `WA_MANUAL_FOLLOW_UP`, `CUSTOMER_UPDATED` (ubah nama / opt-in lewat `PATCH /customers/{id}`; opt-out
+memakai `CUSTOMER_OPTED_OUT`).
 
 ## Lampiran D — Data seed pilot
 

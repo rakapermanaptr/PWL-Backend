@@ -24,8 +24,8 @@ yang dihitung ulang server (nomor order per tanggal bisnis, event layer, ledger 
 penolakan), shift & kas dengan rekap, `Idempotency-Key`, cache tablet (`/sync/bootstrap`,
 `/sync/changes` dengan watermark id transaksi), dan heartbeat. Skenario PRD §16 #1–#11 lolos (untuk #8 sampai pesan `QUEUED` — pengirimannya M5), termasuk
 uji konkurensi paralel. `openapi.yaml` menspesifikasikan semua endpoint M1–M2 dan setiap respons
-divalidasi terhadapnya. Keputusan di luar PRD: [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md),
-[`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md). Yang belum: laporan & impor (M3) dan seterusnya.
+divalidasi terhadapnya. Keputusan yang terisi saat implementasi sudah diterapkan ke PRD Draft 1.2 (riwayat:
+[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md)). Yang belum: laporan & impor (M3) dan seterusnya.
 
 | Sudah jalan di M0 | Perintah |
 |---|---|
@@ -441,5 +441,5 @@ Langkah 2 memakai migrasi/skrip operasional sekali pakai, bukan `UPDATE` manual 
 | Desain v2 multi-cabang | `~/Website/prima-wash-laundry` |
 | Hak akses database & operasional | [`docs/ops/database-roles.md`](docs/ops/database-roles.md) |
 | **Panduan integrasi API untuk tim Android** | [`docs/api-integration.md`](docs/api-integration.md) |
-| Celah PRD yang diisi di M1 (untuk PRD & tim Android) | [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) |
+| Riwayat keputusan celah PRD (sudah di PRD Draft 1.2) | [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md) |
 | Panduan kerja untuk Claude | [`CLAUDE.md`](CLAUDE.md) |

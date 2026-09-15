@@ -14,8 +14,8 @@ info:
     `x-planned-endpoints`; tiap endpoint dipindahkan ke `paths` pada PR yang mengimplementasikannya.
     Setiap respons di `paths` divalidasi terhadap skema di berkas ini oleh `./gradlew contractTest`.
 
-    Kode & pesan error yang belum ada di PRD Lampiran B/C dicatat di `docs/prd-gaps-m1.md` dan
-    `docs/prd-gaps-m2.md`.
+    Kode & pesan error mengikuti PRD Draft 1.2 Lampiran B; riwayat keputusannya di `docs/prd-gaps-m1.md`
+    dan `docs/prd-gaps-m2.md`.
 
     Konvensi (PRD §6):
       * JSON UTF-8, field camelCase; kolom database snake_case. Nilai kosong dikirim sebagai `null`.

@@ -8,8 +8,8 @@ sudah tersedia.
 |---|---|
 | **Cakupan** | M1 — login & sesi, tablet, cabang, staff, price list, loyalty, reward, customer · M2 — order, antrean offline, shift & kas, cache tablet, heartbeat |
 | **Kontrak lengkap** | `openapi.yaml` di root repo backend — skema setiap request/response; bisa di-import ke Postman |
-| **Aturan bisnis** | `PRD-Backend-REST-API.md` (Draft 1.1), di folder yang sama dengan dokumen ini |
-| **Keputusan di luar PRD** | `docs/prd-gaps-m1.md` dan `docs/prd-gaps-m2.md` di repo backend |
+| **Aturan bisnis** | `PRD-Backend-REST-API.md` (Draft 1.2), di folder yang sama dengan dokumen ini |
+| **Riwayat keputusan** | `docs/prd-gaps-m1.md` dan `docs/prd-gaps-m2.md` di repo backend — sudah diterapkan ke PRD Draft 1.2 |
 | **Sumber** | Repo backend `PWL-Backend` → `docs/api-integration.md`, disalin ke repo Android `docs/backend/`. Bila ragu, versi di repo backend yang berlaku |
 | **Terakhir diperbarui** | 15 September 2026 |
 
@@ -621,4 +621,4 @@ Endpoint yang belum ada membalas `404 NOT_FOUND`.
 | Tanggal | Perubahan |
 |---|---|
 | 14 September 2026 | Versi pertama untuk M1. Login tanpa aktivasi perangkat (`X-Device-Id` menggantikan token perangkat). |
-| 15 September 2026 | M2: order, antrean offline, shift & kas, cache tablet (`/sync/bootstrap`, `/sync/changes`), heartbeat. |
+| 15 September 2026 | M2: order, antrean offline, shift & kas, cache tablet (`/sync/bootstrap`, `/sync/changes`), heartbeat. Mengacu PRD Draft 1.2. |

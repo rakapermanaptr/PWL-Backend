@@ -1,10 +1,13 @@
 # Celah PRD yang diisi di M2
 
+> **Status: seluruh isi dokumen ini sudah diterapkan ke PRD Draft 1.2 (15 September 2026)** — §6, §7.2, §8.6,
+> §8.7, §8.10, §11, §15, Lampiran A–C. Dokumen ini dipertahankan sebagai riwayat keputusan; bila berbeda, PRD yang
+> berlaku.
+
 Catatan untuk PRD Backend (sumber asli di repo Android `PrimaWash` → `docs/backend/`) dan untuk tim
 Android, lanjutan dari [`prd-gaps-m1.md`](prd-gaps-m1.md). Semua yang ada di sini **sudah
 diimplementasikan** di M2 (order, sinkronisasi offline, shift & kas, cache tablet, heartbeat) karena
-endpoint-nya butuh jawaban, tetapi belum tertulis di PRD. Setelah disetujui, salin ke PRD (Lampiran B/C,
-§8.6–§8.10, §11) lalu salin ulang PRD ke repo ini.
+endpoint-nya butuh jawaban, tetapi belum tertulis di PRD saat itu.
 
 Aturan yang dipakai saat mengisi sama dengan M1: teks dari use case klien dipakai apa adanya; hanya yang
 benar-benar belum ada yang didrafkan baru.
