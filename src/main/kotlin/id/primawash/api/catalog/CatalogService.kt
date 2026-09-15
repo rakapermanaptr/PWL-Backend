@@ -14,6 +14,7 @@ import id.primawash.api.db.translatingUniqueViolation
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import java.time.Clock
+import java.time.Instant
 import java.util.UUID
 
 data class ServiceChange(
@@ -294,6 +295,39 @@ class CatalogService(
             )
             RewardChange(reward.copy(active = active), changed = true)
         }
+
+    // ---- Used by OrderService and SyncService, inside their transaction ---------------------------
+
+    fun findServices(ids: Collection<UUID>): Map<UUID, ServiceRecord> =
+        repository.findServicesByIds(ids).associateBy { it.id }
+
+    /** What [service] cost at [at] — the price an offline transaction should have used (PRD §11.2). */
+    fun priceAt(
+        service: ServiceRecord,
+        at: Instant,
+    ): Long = repository.priceChangedAfter(service.id, at) ?: service.price
+
+    /**
+     * The loyalty rate of a transaction captured at [at] (P0 #6): the rate row effective then, never the
+     * current one. A capture older than every rate row uses the first rate.
+     */
+    fun rateAt(at: Instant): LoyaltyRateRecord =
+        repository.rateEffectiveAt(at) ?: repository.earliestRate()
+            ?: throw NotFoundException("Rate poin belum diatur.")
+
+    fun lockReward(id: UUID): RewardRecord? = repository.findReward(id, forUpdate = true)
+
+    fun recordRewardUse(id: UUID) = repository.incrementRewardUsedCount(id)
+
+    fun allServices(): List<ServiceRecord> = repository.findServices(includeInactive = true)
+
+    fun allRewards(): List<RewardRecord> = repository.findRewards(includeInactive = true)
+
+    fun rateNow(): LoyaltyRateRecord? = repository.rateEffectiveAt(clock.instant())
+
+    fun findRewards(ids: Collection<UUID>): List<RewardRecord> = repository.findRewardsByIds(ids)
+
+    fun findRates(ids: Collection<UUID>): List<LoyaltyRateRecord> = repository.findRatesByIds(ids)
 
     companion object {
         private const val SERVICE_ENTITY = "service"

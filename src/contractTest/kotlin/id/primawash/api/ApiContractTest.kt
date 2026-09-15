@@ -18,10 +18,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 /**
  * Every endpoint needs a contract test against `openapi.yaml` (CLAUDE.md). One walk through the whole
- * M1 surface — owner and cashier, success and the documented errors — validates each response body
+ * API surface — owner and cashier, success and the documented errors — validates each response body
  * against the schema declared for its status, then checks that no documented operation was skipped
  * and that the server serves nothing the document does not describe.
  */
@@ -216,6 +218,8 @@ class ApiContractTest {
                 .get("/customers/$dewi/points", siti)
                 .conformsTo("GET", "/api/v1/customers/{id}/points", HttpStatusCode.OK)
 
+            walkTransactions(api, siti, owner, dewi, cuciSetrika, created)
+
             // ---- Hand-over and exits --------------------------------------------------------
             val bagas =
                 api
@@ -243,6 +247,204 @@ class ApiContractTest {
 
             (OpenApiContract.operations() - exercised).shouldBeEmpty()
         }
+
+    /** The M2 surface, walked as one cashier's day; a separate method only to stay under the JVM method size limit. */
+    @Suppress("LongMethod")
+    private suspend fun walkTransactions(
+        api: TestApi,
+        siti: String,
+        owner: String,
+        dewi: String,
+        cuciSetrika: String,
+        inactiveService: String,
+    ) {
+        val tebet = ApiTestSupport.branchId("TBT")
+        val bintaro = ApiTestSupport.branchId("BTR")
+        val created = inactiveService
+        // ---- Shift, orders, offline queue, tablet cache (M2) ----------------------------------------
+        api.get("/shifts/current", siti).conformsTo("GET", "/api/v1/shifts/current", HttpStatusCode.OK)
+        api
+            .get("/shifts/current?branchId=$bintaro", siti)
+            .conformsTo("GET", "/api/v1/shifts/current", HttpStatusCode.Forbidden)
+        val walkIn = Tx.orderBody(Tx.key(), listOf(Line(cuciSetrika, "2", 11_000)), 22_000)
+        api
+            .post("/orders", walkIn, siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/orders", HttpStatusCode.UnprocessableEntity)
+        val sitiProof = proofFor(api, siti, "Siti Nurhaliza", "1234")
+        api
+            .post("/shifts", """{"openingCash":0,"staffProof":"$sitiProof"}""", siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/shifts", HttpStatusCode.UnprocessableEntity)
+        api
+            .post("/shifts", """{"openingCash":500000,"staffProof":"$sitiProof"}""", siti)
+            .conformsTo("POST", "/api/v1/shifts", HttpStatusCode.BadRequest)
+        val shift =
+            api
+                .post(
+                    "/shifts",
+                    """{"openingCash":500000,"staffProof":"$sitiProof"}""",
+                    siti,
+                    idempotencyKey = Tx.key(),
+                ).conformsTo("POST", "/api/v1/shifts", HttpStatusCode.Created)
+                .json()
+                .obj("shift")
+                .string("id")
+        val secondProof = proofFor(api, siti, "Siti Nurhaliza", "1234")
+        api
+            .post("/shifts", """{"openingCash":500000,"staffProof":"$secondProof"}""", siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/shifts", HttpStatusCode.Conflict)
+        api.get("/shifts/latest", siti).conformsTo("GET", "/api/v1/shifts/latest", HttpStatusCode.OK)
+        api.get("/shifts", siti).conformsTo("GET", "/api/v1/shifts", HttpStatusCode.Forbidden)
+        api.get("/shifts?limit=1", owner).conformsTo("GET", "/api/v1/shifts", HttpStatusCode.OK)
+        api.get("/shifts?from=kemarin", owner).conformsTo("GET", "/api/v1/shifts", HttpStatusCode.BadRequest)
+
+        api.get("/orders/next-number", siti).conformsTo("GET", "/api/v1/orders/next-number", HttpStatusCode.OK)
+        val order =
+            api
+                .post(
+                    "/orders",
+                    Tx.orderBody(Tx.key(), listOf(Line(cuciSetrika, "4.5", 11_000)), 49_500, customerId = dewi),
+                    siti,
+                    idempotencyKey = Tx.key(),
+                ).conformsTo("POST", "/api/v1/orders", HttpStatusCode.Created)
+                .json()
+                .obj("order")
+                .string("id")
+        api
+            .post("/orders", walkIn, siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/orders", HttpStatusCode.Created)
+        api
+            .post(
+                "/orders",
+                Tx.orderBody(Tx.key(), listOf(Line(cuciSetrika, "1", 10_000)), 10_000),
+                siti,
+                idempotencyKey = Tx.key(),
+            ).conformsTo("POST", "/api/v1/orders", HttpStatusCode.Conflict)
+        api
+            .post(
+                "/orders",
+                Tx.orderBody(Tx.key(), listOf(Line(cuciSetrika, "1", 11_000)), 11_000, customerId = tebet.toString()),
+                siti,
+                idempotencyKey = Tx.key(),
+            ).conformsTo("POST", "/api/v1/orders", HttpStatusCode.NotFound)
+        api
+            .post("/orders", """{"items":[]}""", siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/orders", HttpStatusCode.BadRequest)
+        api.get("/orders?q=dewi", siti).conformsTo("GET", "/api/v1/orders", HttpStatusCode.OK)
+        api.get("/orders?status=HILANG", siti).conformsTo("GET", "/api/v1/orders", HttpStatusCode.BadRequest)
+        api.get("/orders/$order", siti).conformsTo("GET", "/api/v1/orders/{id}", HttpStatusCode.OK)
+        api.get("/orders/$shift", siti).conformsTo("GET", "/api/v1/orders/{id}", HttpStatusCode.NotFound)
+        api
+            .post("/orders/$order/advance", """{"fromStatus":"DITERIMA"}""", siti)
+            .conformsTo("POST", "/api/v1/orders/{id}/advance", HttpStatusCode.OK)
+        api
+            .post("/orders/$order/advance", """{"fromStatus":"DITERIMA"}""", siti)
+            .conformsTo("POST", "/api/v1/orders/{id}/advance", HttpStatusCode.Conflict)
+        api
+            .post("/orders/$shift/advance", """{"fromStatus":"DITERIMA"}""", siti)
+            .conformsTo("POST", "/api/v1/orders/{id}/advance", HttpStatusCode.NotFound)
+        api
+            .post("/orders/$order/advance", """{}""", siti)
+            .conformsTo("POST", "/api/v1/orders/{id}/advance", HttpStatusCode.BadRequest)
+
+        val capturedAt =
+            Instant
+                .now()
+                .minusSeconds(600)
+                .truncatedTo(ChronoUnit.SECONDS)
+                .toString()
+        val offline =
+            Tx.syncBody(
+                Tx.offline(
+                    capturedAt = capturedAt,
+                    lines = listOf(Line(cuciSetrika, "2", 10_000)),
+                    shiftId = shift,
+                    newCustomer = Tx.newCustomer(Tx.key(), "Rina Kusuma", "0838-7712-4409", optIn = true),
+                ),
+                Tx.offline(capturedAt = capturedAt, lines = listOf(Line(cuciSetrika, "1", 11_000)), rewardId = created),
+            )
+        api
+            .post("/orders/sync", offline, siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/orders/sync", HttpStatusCode.OK)
+        api
+            .post("/orders/sync", """{}""", siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/orders/sync", HttpStatusCode.BadRequest)
+
+        api
+            .post(
+                "/shifts/$shift/cash-entries",
+                """{"direction":"OUT","label":"beli deterjen","amount":180000}""",
+                siti,
+                idempotencyKey = Tx.key(),
+            ).conformsTo("POST", "/api/v1/shifts/{id}/cash-entries", HttpStatusCode.Created)
+        api
+            .post(
+                "/shifts/$shift/cash-entries",
+                """{"direction":"IN","label":"","amount":1000}""",
+                siti,
+                idempotencyKey = Tx.key(),
+            ).conformsTo("POST", "/api/v1/shifts/{id}/cash-entries", HttpStatusCode.UnprocessableEntity)
+        api
+            .post(
+                "/shifts/$order/cash-entries",
+                """{"direction":"IN","label":"x","amount":1000}""",
+                siti,
+                idempotencyKey = Tx.key(),
+            ).conformsTo("POST", "/api/v1/shifts/{id}/cash-entries", HttpStatusCode.NotFound)
+        api
+            .put("/shifts/$shift/counted-cash", """{"countedCash":400000}""", siti)
+            .conformsTo("PUT", "/api/v1/shifts/{id}/counted-cash", HttpStatusCode.OK)
+        api
+            .put("/shifts/$shift/counted-cash", """{"countedCash":-1}""", siti)
+            .conformsTo("PUT", "/api/v1/shifts/{id}/counted-cash", HttpStatusCode.BadRequest)
+        api
+            .post("/shifts/$shift/close", """{"countedCash":400000}""", siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/shifts/{id}/close", HttpStatusCode.OK)
+        api
+            .post("/shifts/$shift/close", """{"countedCash":400000}""", siti, idempotencyKey = Tx.key())
+            .conformsTo("POST", "/api/v1/shifts/{id}/close", HttpStatusCode.Conflict)
+        api
+            .put("/shifts/$shift/counted-cash", """{"countedCash":1}""", siti)
+            .conformsTo("PUT", "/api/v1/shifts/{id}/counted-cash", HttpStatusCode.Conflict)
+
+        // The shift opened by someone else's PIN hands the tablet over: `session` is a token response.
+        val cipeteTablet = api.till("CPT", "3690")
+        val ownerProof = proofFor(api, cipeteTablet.token, "Raka Prasetyo", "9090")
+        api
+            .post(
+                "/shifts",
+                """{"openingCash":300000,"staffProof":"$ownerProof"}""",
+                cipeteTablet.token,
+                idempotencyKey = Tx.key(),
+            ).conformsTo("POST", "/api/v1/shifts", HttpStatusCode.Created)
+
+        val cursor =
+            api
+                .get("/sync/bootstrap", siti)
+                .conformsTo("GET", "/api/v1/sync/bootstrap", HttpStatusCode.OK)
+                .json()
+                .string("cursor")
+        api.get("/sync/changes?since=$cursor", siti).conformsTo("GET", "/api/v1/sync/changes", HttpStatusCode.OK)
+        api
+            .get("/sync/changes?since=rusak", siti)
+            .conformsTo("GET", "/api/v1/sync/changes", HttpStatusCode.BadRequest)
+        api
+            .post("/devices/heartbeat", """{"pendingCount":2,"appVersion":"1.4.0","online":true}""", siti)
+            .conformsTo("POST", "/api/v1/devices/heartbeat", HttpStatusCode.OK)
+        api
+            .post("/devices/heartbeat", """{"online":true}""", siti)
+            .conformsTo("POST", "/api/v1/devices/heartbeat", HttpStatusCode.BadRequest)
+    }
+
+    private suspend fun proofFor(
+        api: TestApi,
+        token: String,
+        staffName: String,
+        pin: String,
+    ): String =
+        api
+            .post("/auth/verify-pin", """{"staffId":"${ApiTestSupport.staffId(staffName)}","pin":"$pin"}""", token)
+            .json()
+            .string("staffProof")
 
     @Test
     fun `should serve nothing that openapi yaml does not document`() =

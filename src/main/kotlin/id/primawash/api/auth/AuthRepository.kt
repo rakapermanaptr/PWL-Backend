@@ -28,6 +28,15 @@ data class SessionRecord(
     val revokedAt: Instant?,
 )
 
+data class StaffProofRecord(
+    val id: UUID,
+    val staffId: UUID,
+    val deviceId: UUID,
+    val branchId: UUID,
+    val expiresAt: Instant,
+    val usedAt: Instant?,
+)
+
 /** Exposed queries for `sessions`, `staff_proofs`, and the failed-PIN window read from `audit_log`. */
 class AuthRepository {
     fun insertSession(
@@ -122,6 +131,33 @@ class AuthRepository {
             it[StaffProofsTable.branchId] = branchId
             it[StaffProofsTable.createdAt] = Timestamps.toDb(createdAt)
             it[StaffProofsTable.expiresAt] = Timestamps.toDb(expiresAt)
+        }
+    }
+
+    /** Locks the proof row, so one proof can be spent by one request only. */
+    fun findStaffProofForUpdate(tokenHash: String): StaffProofRecord? =
+        StaffProofsTable
+            .selectAll()
+            .where { StaffProofsTable.tokenHash eq tokenHash }
+            .forUpdate(ForUpdateOption.ForUpdate)
+            .firstOrNull()
+            ?.let {
+                StaffProofRecord(
+                    id = it[StaffProofsTable.id],
+                    staffId = it[StaffProofsTable.staffId],
+                    deviceId = it[StaffProofsTable.deviceId],
+                    branchId = it[StaffProofsTable.branchId],
+                    expiresAt = Timestamps.fromDb(it[StaffProofsTable.expiresAt]),
+                    usedAt = it[StaffProofsTable.usedAt]?.let(Timestamps::fromDb),
+                )
+            }
+
+    fun markStaffProofUsed(
+        id: UUID,
+        at: Instant,
+    ) {
+        StaffProofsTable.update({ (StaffProofsTable.id eq id) and StaffProofsTable.usedAt.isNull() }) {
+            it[usedAt] = Timestamps.toDb(at)
         }
     }
 

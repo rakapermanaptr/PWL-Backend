@@ -15,14 +15,17 @@ offline**.
 
 ## Status
 
-**M1 selesai di `development` — identitas & master data.** Di atas fondasi M0 (Gradle/Ktor JVM 21,
-Flyway, seed pilot, CI, Docker, staging di <https://pwl-cashier-staging-rvz75.ondigitalocean.app>)
-sekarang ada: login "pilih cabang → ketik PIN" tanpa aktivasi perangkat, batas percobaan per tablet,
-per akun & per alamat jaringan, sesi
-JWT + refresh token berotasi, ganti staff/cabang, cabang, staff, price list, loyalty rate, reward,
-customer, dan audit untuk setiap mutasi. `openapi.yaml` menspesifikasikan semua endpoint M1 dan
-setiap respons divalidasi terhadapnya. Kode/pesan yang belum ada di PRD dicatat di
-[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md). Yang belum: transaksi (M2) dan seterusnya.
+**M2 selesai di `development` — transaksi.** M1 (identitas & master data: login "pilih cabang → ketik
+PIN" tanpa aktivasi perangkat, sesi, cabang, staff, price list, loyalty, reward, customer, audit) sudah
+di `main` dan staging <https://pwl-cashier-staging-rvz75.ondigitalocean.app>. M2 menambah: order online
+yang dihitung ulang server (nomor order per tanggal bisnis, event layer, ledger poin, total shift, kas,
+`daily_sales`, audit, dan baris outbox WhatsApp `QUEUED` dalam satu transaksi), advance status dengan
+`fromStatus`, sinkronisasi antrean offline per transaksi (rate/tanggal/nomor dari `capturedAt`, flag bukan
+penolakan), shift & kas dengan rekap, `Idempotency-Key`, cache tablet (`/sync/bootstrap`,
+`/sync/changes` dengan watermark id transaksi), dan heartbeat. Skenario PRD §16 #1–#11 lolos (untuk #8 sampai pesan `QUEUED` — pengirimannya M5), termasuk
+uji konkurensi paralel. `openapi.yaml` menspesifikasikan semua endpoint M1–M2 dan setiap respons
+divalidasi terhadapnya. Keputusan yang terisi saat implementasi sudah diterapkan ke PRD Draft 1.2 (riwayat:
+[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md)). Yang belum: laporan & impor (M3) dan seterusnya.
 
 | Sudah jalan di M0 | Perintah |
 |---|---|
@@ -37,8 +40,8 @@ setiap respons divalidasi terhadapnya. Kode/pesan yang belum ada di PRD dicatat 
 | Milestone | Isi | Status |
 |---|---|---|
 | M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | ✅ staging aktif, skema V2 di `main` |
-| M1 Identitas & master data | Login PIN tanpa aktivasi, cabang, staff, price list, loyalty, reward, customer, audit | 🔨 selesai di `development`, belum di staging |
-| M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | ⬜ |
+| M1 Identitas & master data | Login PIN tanpa aktivasi, cabang, staff, price list, loyalty, reward, customer, audit | ✅ di `main` & staging |
+| M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | 🔨 selesai di `development`, belum di staging |
 | M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | ⬜ |
 | M4 Shadow mode | Dry-run 3–5 hari paralel dengan SaaS lama + UAT (belum mengirim WA) | ⬜ |
 | M5 Integrasi Meta/WhatsApp | Worker, Cloud API client, retry, webhook, opt-out STOP, failures API, summary | ⬜ |
@@ -438,5 +441,5 @@ Langkah 2 memakai migrasi/skrip operasional sekali pakai, bukan `UPDATE` manual 
 | Desain v2 multi-cabang | `~/Website/prima-wash-laundry` |
 | Hak akses database & operasional | [`docs/ops/database-roles.md`](docs/ops/database-roles.md) |
 | **Panduan integrasi API untuk tim Android** | [`docs/api-integration.md`](docs/api-integration.md) |
-| Celah PRD yang diisi di M1 (untuk PRD & tim Android) | [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md) |
+| Riwayat keputusan celah PRD (sudah di PRD Draft 1.2) | [`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md) |
 | Panduan kerja untuk Claude | [`CLAUDE.md`](CLAUDE.md) |

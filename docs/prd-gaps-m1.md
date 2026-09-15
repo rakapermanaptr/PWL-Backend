@@ -1,9 +1,12 @@
 # Celah PRD yang diisi di M1
 
+> **Status: seluruh isi dokumen ini sudah diterapkan ke PRD Draft 1.2 (15 September 2026)** — bagian 0 di
+> Draft 1.1, bagian 1–5 di Draft 1.2 (§6, §8.1–§8.5, Lampiran B & C). Dokumen ini dipertahankan sebagai riwayat
+> keputusan; bila berbeda, PRD yang berlaku.
+
 Catatan untuk PRD Backend (sumber asli di repo Android `PrimaWash` → `docs/backend/`) dan untuk tim
 Android. Semua yang ada di sini **sudah diimplementasikan** di M1 karena endpoint-nya butuh jawaban,
-tetapi belum tertulis di PRD. Setelah disetujui, salin ke PRD (Lampiran B/C dan §8.1) lalu salin ulang
-PRD ke repo ini.
+tetapi belum tertulis di PRD saat itu.
 
 Aturan yang dipakai saat mengisi: bila use case klien sudah punya teksnya, teks itu yang dipakai apa
 adanya; hanya yang benar-benar belum ada yang didrafkan baru.

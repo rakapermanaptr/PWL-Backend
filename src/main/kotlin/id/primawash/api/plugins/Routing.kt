@@ -7,7 +7,10 @@ import id.primawash.api.catalog.catalogRoutes
 import id.primawash.api.customer.customerRoutes
 import id.primawash.api.device.deviceRoutes
 import id.primawash.api.health.healthRoutes
+import id.primawash.api.order.orderRoutes
+import id.primawash.api.shift.shiftRoutes
 import id.primawash.api.staff.staffRoutes
+import id.primawash.api.sync.syncRoutes
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.auth.authenticate
@@ -21,8 +24,9 @@ const val API_BASE_PATH = "/api/v1"
 
 /**
  * Feature routes are mounted here as each milestone lands. M1: devices, auth, branches, staff, the
- * catalog and customers. M2 adds orders, shifts and sync; M3 reports; M5 the WhatsApp endpoints
- * (see README "Integrasi Meta / WhatsApp") — none of those exist before their milestone.
+ * catalog and customers. M2: orders, offline sync, shifts, the tablet cache and heartbeat. M3 adds
+ * reports; M5 the WhatsApp endpoints (see README "Integrasi Meta / WhatsApp") — none of those exist
+ * before their milestone.
  */
 fun Application.configureRouting(
     dataSource: DataSource,
@@ -47,6 +51,9 @@ fun Application.configureRouting(
                     staffRoutes(get())
                     catalogRoutes(get())
                     customerRoutes(get())
+                    orderRoutes(get(), get())
+                    shiftRoutes(get())
+                    syncRoutes(get())
                 }
             }
         }

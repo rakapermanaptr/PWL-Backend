@@ -2,6 +2,7 @@ package id.primawash.api.db
 
 import org.jetbrains.exposed.v1.core.ColumnType
 import org.jetbrains.exposed.v1.core.Table
+import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.java.javaUUID
 import org.jetbrains.exposed.v1.javatime.date
 import org.jetbrains.exposed.v1.javatime.timestampWithTimeZone
@@ -178,6 +179,95 @@ object ShiftsTable : Table("shifts") {
     val openedByName = text("opened_by_name")
     val openedAt = timestampWithTimeZone("opened_at")
     val closedAt = timestampWithTimeZone("closed_at").nullable()
+    val closedByStaffId = javaUUID("closed_by_staff_id").nullable()
+    val openingCash = long("opening_cash")
+    val cashSales = long("cash_sales")
+    val transferSales = long("transfer_sales")
+    val txCount = integer("tx_count")
+    val pointsIssued = long("points_issued")
+    val countedCash = long("counted_cash")
+    val recapExpected = long("recap_expected").nullable()
+    val recapActual = long("recap_actual").nullable()
+    val version = integer("version")
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object CashEntriesTable : Table("cash_entries") {
+    val id = javaUUID("id")
+    val shiftId = javaUUID("shift_id")
+    val branchId = javaUUID("branch_id")
+    val kind = text("kind")
+    val label = text("label")
+    val note = text("note")
+    val amount = long("amount")
+    val orderId = javaUUID("order_id").nullable()
+    val staffId = javaUUID("staff_id")
+    val createdAt = timestampWithTimeZone("created_at")
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object OrdersTable : Table("orders") {
+    val id = javaUUID("id")
+    val number = varchar("number", ORDER_NUMBER_LENGTH)
+    val branchId = javaUUID("branch_id")
+    val businessDate = date("business_date")
+    val seq = integer("seq")
+    val clientTxId = javaUUID("client_tx_id")
+    val orderSource = text("source")
+    val customerId = javaUUID("customer_id").nullable()
+    val customerName = text("customer_name")
+    val customerPhone = text("customer_phone")
+    val note = text("note")
+    val subtotal = long("subtotal")
+    val discount = long("discount")
+    val total = long("total")
+    val rewardId = javaUUID("reward_id").nullable()
+    val rewardName = text("reward_name").nullable()
+    val redeemedPoints = long("redeemed_points")
+    val earnedPoints = long("earned_points")
+    val loyaltyRateId = javaUUID("loyalty_rate_id")
+    val payment = text("payment")
+    val status = text("status")
+    val waStatus = text("wa_status")
+    val shiftId = javaUUID("shift_id")
+    val staffId = javaUUID("staff_id")
+    val deviceId = javaUUID("device_id").nullable()
+    val capturedAt = timestampWithTimeZone("captured_at")
+    val createdAt = timestampWithTimeZone("created_at")
+    val statusChangedAt = timestampWithTimeZone("status_changed_at")
+    val flags = array<String>("flags", TextColumnType())
+    val version = integer("version")
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object OrderItemsTable : Table("order_items") {
+    val id = javaUUID("id")
+    val orderId = javaUUID("order_id")
+    val position = integer("position")
+    val serviceId = javaUUID("service_id")
+    val name = text("name")
+    val qty = decimal("qty", QTY_PRECISION, QTY_SCALE)
+    val unit = text("unit")
+    val unitPrice = long("unit_price")
+    val subtotal = long("subtotal")
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object OrderEventsTable : Table("order_events") {
+    val id = long("id")
+    val orderId = javaUUID("order_id")
+    val branchId = javaUUID("branch_id")
+    val type = text("type")
+    val fromStatus = text("from_status").nullable()
+    val toStatus = text("to_status").nullable()
+    val staffId = javaUUID("staff_id").nullable()
+    val deviceId = javaUUID("device_id").nullable()
+    val createdAt = timestampWithTimeZone("created_at")
+    val payload = jsonb("payload")
 
     override val primaryKey = PrimaryKey(id)
 }
@@ -193,11 +283,30 @@ object DailySalesTable : Table("daily_sales") {
 
 object WaMessagesTable : Table("wa_messages") {
     val id = javaUUID("id")
+    val branchId = javaUUID("branch_id")
+    val orderId = javaUUID("order_id").nullable()
     val customerId = javaUUID("customer_id").nullable()
+    val template = text("template")
+    val toPhone = varchar("to_phone", E164_LENGTH)
+    val params = jsonb("params")
     val status = text("status")
     val errorReason = text("error_reason").nullable()
+    val nextAttemptAt = timestampWithTimeZone("next_attempt_at")
+    val queuedAt = timestampWithTimeZone("queued_at")
 
     override val primaryKey = PrimaryKey(id)
+}
+
+object IdempotencyKeysTable : Table("idempotency_keys") {
+    val key = javaUUID("key")
+    val deviceId = javaUUID("device_id")
+    val endpoint = text("endpoint")
+    val requestHash = char("request_hash", HASH_LENGTH)
+    val statusCode = integer("status_code")
+    val response = jsonb("response")
+    val createdAt = timestampWithTimeZone("created_at")
+
+    override val primaryKey = PrimaryKey(deviceId, key)
 }
 
 object AuditLogTable : Table("audit_log") {
@@ -222,6 +331,10 @@ private const val PHONE_DIGITS_LENGTH = 13
 private const val STEP_PRECISION = 3
 private const val STEP_SCALE = 1
 private const val ACTION_TYPE_LENGTH = 40
+private const val ORDER_NUMBER_LENGTH = 20
+private const val QTY_PRECISION = 7
+private const val QTY_SCALE = 1
+private const val E164_LENGTH = 15
 
 /**
  * `jsonb` as raw JSON text. The `exposed-json` module is not a dependency; this is the one column

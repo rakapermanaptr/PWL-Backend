@@ -26,3 +26,16 @@ data class DeviceChangeResponse(
     val device: DeviceDto,
     val changed: Boolean,
 )
+
+@Serializable
+data class HeartbeatRequest(
+    val pendingCount: Int? = null,
+    val appVersion: String? = null,
+    val online: Boolean? = null,
+)
+
+@Serializable
+data class HeartbeatResponse(
+    /** Server clock, so the tablet can notice a wrong clock before it stamps offline `capturedAt`. */
+    val serverTime: String,
+)

@@ -9,10 +9,12 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -29,6 +31,8 @@ data class CustomerRecord(
     val optIn: Boolean,
     val visits: Int,
     val homeBranchId: UUID,
+    /** When the current WhatsApp consent was given — `OPT_IN_CONFIRM` is sent once per consent. */
+    val optInAt: Instant? = null,
 )
 
 data class PointsEntryRecord(
@@ -85,6 +89,16 @@ class CustomerRepository {
             .firstOrNull()
             ?.toCustomer()
 
+    fun findByIds(ids: Collection<UUID>): List<CustomerRecord> =
+        if (ids.isEmpty()) {
+            emptyList()
+        } else {
+            CustomersTable.selectAll().where { CustomersTable.id inList ids }.map { it.toCustomer() }
+        }
+
+    fun findAll(): List<CustomerRecord> =
+        CustomersTable.selectAll().orderBy(CustomersTable.name to SortOrder.ASC).map { it.toCustomer() }
+
     fun findByPhoneDigits(digits: String): CustomerRecord? =
         CustomersTable
             .selectAll()
@@ -137,6 +151,41 @@ class CustomerRepository {
         }
     }
 
+    /**
+     * One points movement: a ledger row plus the cached balance, in the caller's transaction. The ledger
+     * is the source of truth; `points_balance` mirrors its running sum (PRD §7.2).
+     */
+    @Suppress("LongParameterList")
+    fun insertLedger(
+        customerId: UUID,
+        orderId: UUID?,
+        type: String,
+        delta: Long,
+        balanceAfter: Long,
+        staffId: UUID,
+        at: Instant,
+    ) {
+        PointsLedgerTable.insert {
+            it[PointsLedgerTable.customerId] = customerId
+            it[PointsLedgerTable.orderId] = orderId
+            it[PointsLedgerTable.type] = type
+            it[PointsLedgerTable.delta] = delta
+            it[PointsLedgerTable.balanceAfter] = balanceAfter
+            it[PointsLedgerTable.staffId] = staffId
+            it[createdAt] = Timestamps.toDb(at)
+        }
+    }
+
+    fun updateBalanceAndAddVisit(
+        id: UUID,
+        balance: Long,
+    ) {
+        CustomersTable.update({ CustomersTable.id eq id }) {
+            it[pointsBalance] = balance
+            it[visits] = visits + 1
+        }
+    }
+
     /** Messages still waiting in the outbox are never sent to a customer who withdrew consent. */
     fun cancelQueuedWhatsApp(
         customerId: UUID,
@@ -186,5 +235,6 @@ class CustomerRepository {
             optIn = this[CustomersTable.optIn],
             visits = this[CustomersTable.visits],
             homeBranchId = this[CustomersTable.homeBranchId],
+            optInAt = this[CustomersTable.optInAt]?.let(Timestamps::fromDb),
         )
 }

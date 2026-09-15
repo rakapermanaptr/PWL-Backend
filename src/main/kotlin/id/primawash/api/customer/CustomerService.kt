@@ -20,6 +20,13 @@ import kotlinx.serialization.json.put
 import java.time.Clock
 import java.util.UUID
 
+/** A customer registered offline, resolved at sync time (PRD §11.2). */
+data class OfflineCustomer(
+    val customer: CustomerRecord,
+    /** True when the phone already belonged to another customer, who wins over the tablet's new id. */
+    val matchedByPhone: Boolean,
+)
+
 data class CustomerUpdate(
     val customer: CustomerRecord,
     val changed: Boolean,
@@ -68,10 +75,7 @@ class CustomerService(
         if (cleanName.isEmpty()) throw BusinessRuleException(ErrorCodes.NAME_REQUIRED, "Nama customer wajib diisi.")
         val digits =
             PhoneNumber.validate(phone.orEmpty()).getOrElse {
-                throw BusinessRuleException(
-                    ErrorCodes.PHONE_INVALID,
-                    "Nomor WhatsApp belum valid (minimal 10 digit, diawali 08).",
-                )
+                throw BusinessRuleException(ErrorCodes.PHONE_INVALID, PHONE_INVALID_MESSAGE)
             }
         return try {
             tx {
@@ -184,6 +188,98 @@ class CustomerService(
         return Page(page, next)
     }
 
+    // ---- Used by OrderService, inside its transaction ---------------------------------------------
+
+    /** Locks the customer of an order, so concurrent orders never read the same points balance. */
+    fun lockForOrder(id: UUID): CustomerRecord? = repository.findById(id, forUpdate = true)
+
+    /**
+     * Points and visits of a paid order (PRD §8.6 effect 3): an `EARN` row for the points earned (none when
+     * zero), then a `REDEEM` row for the reward cost, each with its running balance; `visits + 1` and the
+     * cached balance in the same transaction. [customer] must be locked by [lockForOrder].
+     */
+    fun applyPaidOrder(
+        customer: CustomerRecord,
+        orderId: UUID,
+        earnedPoints: Long,
+        redeemedPoints: Long,
+        staffId: UUID,
+    ): CustomerRecord {
+        val now = clock.instant()
+        var balance = customer.points
+        if (earnedPoints > 0) {
+            balance += earnedPoints
+            repository.insertLedger(customer.id, orderId, LEDGER_EARN, earnedPoints, balance, staffId, now)
+        }
+        if (redeemedPoints > 0) {
+            balance -= redeemedPoints
+            repository.insertLedger(customer.id, orderId, LEDGER_REDEEM, -redeemedPoints, balance, staffId, now)
+        }
+        repository.updateBalanceAndAddVisit(customer.id, balance)
+        return customer.copy(points = balance, visits = customer.visits + 1)
+    }
+
+    /**
+     * A customer the tablet registered while offline (PRD §11.2): same name and phone rules as
+     * [register]; an existing phone number wins — that customer is used and the tablet's id is mapped to
+     * it. Otherwise the customer is created with the tablet's id and audited like an online registration.
+     * The returned customer is locked for the order being synced.
+     */
+    @Suppress("LongParameterList")
+    fun resolveOffline(
+        clientId: UUID?,
+        name: String?,
+        phone: String?,
+        optIn: Boolean,
+        branchId: UUID,
+        actor: AuditActor,
+    ): OfflineCustomer {
+        val cleanName = name?.trim().orEmpty()
+        if (cleanName.isEmpty()) throw BusinessRuleException(ErrorCodes.NAME_REQUIRED, "Nama customer wajib diisi.")
+        val digits =
+            PhoneNumber.validate(phone.orEmpty()).getOrElse {
+                throw BusinessRuleException(ErrorCodes.PHONE_INVALID, PHONE_INVALID_MESSAGE)
+            }
+        repository.findByPhoneDigits(digits)?.let { existing ->
+            return OfflineCustomer(requireNotNull(lockForOrder(existing.id)), matchedByPhone = existing.id != clientId)
+        }
+        val id = clientId ?: UUID.randomUUID()
+        if (clientId != null && repository.findById(clientId) != null) {
+            throw ValidationException("ID customer dari perangkat sudah dipakai customer lain.")
+        }
+        val display = PhoneNumber.display(digits)
+        repository.insert(
+            id,
+            cleanName,
+            display,
+            digits,
+            optIn,
+            branchId,
+            requireNotNull(actor.staffId),
+            clock.instant(),
+        )
+        audit.write(
+            AuditEntry(
+                branchId = branchId,
+                actor = actor,
+                type = AuditActionType.CUSTOMER_REGISTERED,
+                action = "Daftarkan customer $cleanName ($display) · opt-in WA: ${yesOrNotYet(optIn)}",
+                entityType = ENTITY,
+                entityId = id.toString(),
+                metadata =
+                    buildJsonObject {
+                        put("optIn", optIn)
+                        put("offline", true)
+                    },
+            ),
+        )
+        return OfflineCustomer(requireNotNull(lockForOrder(id)), matchedByPhone = false)
+    }
+
+    fun findByIds(ids: Collection<UUID>): List<CustomerRecord> = repository.findByIds(ids)
+
+    fun findAll(): List<CustomerRecord> = repository.findAll()
+
     private fun entry(
         branchId: UUID,
         actor: AuditActor,
@@ -194,7 +290,10 @@ class CustomerService(
 
     companion object {
         private const val ENTITY = "customer"
-        private const val PHONE_INDEX = "customers_phone_digits_key"
+        const val PHONE_INDEX = "customers_phone_digits_key"
+        private const val PHONE_INVALID_MESSAGE = "Nomor WhatsApp belum valid (minimal 10 digit, diawali 08)."
+        private const val LEDGER_EARN = "EARN"
+        private const val LEDGER_REDEEM = "REDEEM"
 
         private fun yesOrNotYet(optIn: Boolean) = if (optIn) "ya" else "belum"
 

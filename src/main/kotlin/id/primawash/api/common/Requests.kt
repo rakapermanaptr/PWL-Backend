@@ -4,6 +4,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import java.math.BigDecimal
+import java.time.Instant
+import java.time.LocalDate
+import java.time.format.DateTimeParseException
 import java.util.UUID
 
 /**
@@ -43,6 +47,41 @@ object Requests {
             "false" -> false
             else -> throw invalid(field)
         }
+
+    /** A business date `YYYY-MM-DD`; null when absent. */
+    fun date(
+        raw: String?,
+        field: String,
+    ): LocalDate? =
+        raw?.let {
+            try {
+                LocalDate.parse(it)
+            } catch (error: DateTimeParseException) {
+                throw ValidationException("Format tanggal harus YYYY-MM-DD.", invalid(field).details)
+            }
+        }
+
+    /** An ISO-8601 instant such as `2026-08-29T03:12:00.000Z`. */
+    fun instant(
+        raw: String?,
+        field: String,
+    ): Instant =
+        try {
+            Instant.parse(required(raw, field))
+        } catch (error: DateTimeParseException) {
+            throw invalid(field)
+        }
+
+    /** A JSON number read as a decimal, so `4.5` never passes through floating point. */
+    fun decimal(
+        value: JsonPrimitive?,
+        field: String,
+    ): BigDecimal = value?.takeUnless { it.isString }?.content?.toBigDecimalOrNull() ?: throw invalid(field)
+
+    inline fun <reified E : Enum<E>> enum(
+        raw: String?,
+        field: String,
+    ): E = enumValues<E>().firstOrNull { it.name == raw } ?: throw invalid(field)
 
     fun invalid(vararg fields: String): ValidationException = invalid(fields.toList())
 

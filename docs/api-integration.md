@@ -6,12 +6,12 @@ sudah tersedia.
 
 | | |
 |---|---|
-| **Cakupan** | Milestone M1 — login & sesi, tablet, cabang, staff, price list, loyalty, reward, customer |
+| **Cakupan** | M1 — login & sesi, tablet, cabang, staff, price list, loyalty, reward, customer · M2 — order, antrean offline, shift & kas, cache tablet, heartbeat |
 | **Kontrak lengkap** | `openapi.yaml` di root repo backend — skema setiap request/response; bisa di-import ke Postman |
-| **Aturan bisnis** | `PRD-Backend-REST-API.md` (Draft 1.1), di folder yang sama dengan dokumen ini |
-| **Keputusan di luar PRD** | `docs/prd-gaps-m1.md` di repo backend |
+| **Aturan bisnis** | `PRD-Backend-REST-API.md` (Draft 1.2), di folder yang sama dengan dokumen ini |
+| **Riwayat keputusan** | `docs/prd-gaps-m1.md` dan `docs/prd-gaps-m2.md` di repo backend — sudah diterapkan ke PRD Draft 1.2 |
 | **Sumber** | Repo backend `PWL-Backend` → `docs/api-integration.md`, disalin ke repo Android `docs/backend/`. Bila ragu, versi di repo backend yang berlaku |
-| **Terakhir diperbarui** | 14 September 2026 |
+| **Terakhir diperbarui** | 15 September 2026 |
 
 ---
 
@@ -61,6 +61,7 @@ Klien sebaiknya memakai `ignoreUnknownKeys = true` supaya field baru dari server
 | `Authorization` | Semua endpoint selain layar login | `Bearer <accessToken>` |
 | `X-App-Version` | Setiap request | `versionName` aplikasi, mis. `1.4.0`. Di bawah versi minimum server → `426` |
 | `Content-Type` | Request dengan body | `application/json` |
+| `Idempotency-Key` | `POST /orders`, `/orders/sync`, `/shifts`, `/shifts/{id}/cash-entries`, `/shifts/{id}/close` (wajib) | UUID per aksi. Kirim ulang aksi yang sama (timeout, jaringan putus) dengan kunci **yang sama**; server membalas respons pertama tanpa mencatat dua kali |
 
 Respons setiap request membawa header `X-Request-Id` (juga ada di `error.requestId`). Sertakan nilai ini
 saat melaporkan bug ke tim backend.
@@ -250,7 +251,7 @@ cabang dengan `lastBranchId` terpilih.
 | Aksi | Endpoint | Body | Respons |
 |---|---|---|---|
 | Kasir lain mengambil alih tablet | `POST /api/v1/auth/switch-staff` | `{ "staffId", "pin" }` | Sama dengan `pin-login`. Sesi lama berakhir — ganti semua token. Jika staff baru kasir, keluar dari layar owner (`ShellEffect.CashierTookOver`) |
-| Konfirmasi PIN sebelum buka shift | `POST /api/v1/auth/verify-pin` | `{ "staffId", "pin" }` | `{ "staff", "staffProof": "sp_…", "expiresIn": 300 }` — `staffProof` sekali pakai, dikirim ke `POST /shifts` (M2) |
+| Konfirmasi PIN sebelum buka shift | `POST /api/v1/auth/verify-pin` | `{ "staffId", "pin" }` | `{ "staff", "staffProof": "sp_…", "expiresIn": 300 }` — `staffProof` sekali pakai, dikirim ke `POST /shifts` (bagian 8.8) |
 | Owner memindah tablet ke cabang lain | `POST /api/v1/auth/switch-branch` | `{ "branchId" }` | `{ "changed", "accessToken", "accessTokenExpiresIn", "refreshToken", "refreshTokenExpiresIn", "context" }`. `changed: false` → token `null`, tetap pakai token lama |
 | Konteks sesi terbaru | `GET /api/v1/me` | — | `{ "staff", "branch" }` |
 
@@ -315,7 +316,7 @@ suspend fun <T> authorized(call: suspend (accessToken: String) -> HttpResponse, 
 }
 ```
 
-## 8. Endpoint M1
+## 8. Endpoint
 
 Akses: **Pub** = tanpa token · **K** = kasir · **O** = owner. Semua request K/O membawa
 `Authorization: Bearer <accessToken>`. Detail skema ada di `openapi.yaml`.
@@ -402,6 +403,119 @@ tampilan `0812-3390-4471`; klien boleh mengirim `+62 812…`, `0812 3390 4471`, 
 - `409 PHONE_ALREADY_REGISTERED` membawa `details.customer` — langsung pilih customer itu di POS.
 - Opt-out (`optIn: false`) membatalkan pesan WhatsApp customer tsb yang masih antre.
 
+### 8.6 Order
+
+| Method & path | Akses | Body / query | Respons |
+|---|---|---|---|
+| `POST /api/v1/orders` | K/O + `Idempotency-Key` | `{ clientTxId, customerId?, items: [{ serviceId, qty, unitPrice }], rewardId?, payment, note?, expectedTotal }` | `201 { order, customer }` — `customer` = `{ id, points, visits }` terbaru, `null` untuk walk-in |
+| `GET /api/v1/orders` | K/O | `?status=&q=&from=&to=&limit=&cursor=` (owner: `branchId=` atau `scope=all`) | `{ items: [Order], nextCursor, counts: { ALL, DITERIMA, PROSES, SIAP, SELESAI } }` |
+| `GET /api/v1/orders/{id}` | K/O | — | `{ order, events }` |
+| `POST /api/v1/orders/{id}/advance` | K/O | `{ fromStatus }` | `{ result: ADVANCED \| ALREADY_COMPLETED, order, notificationQueued }` |
+| `GET /api/v1/orders/next-number` | K/O | — | `{ number, businessDate }` — perkiraan untuk header POS saja |
+
+**Server yang menghitung.** Klien tetap menghitung total untuk tampilan, lalu mengirim `unitPrice` dan
+`expectedTotal` sebagai *asersi*. Yang disimpan adalah hitungan server — nomor order, subtotal, diskon,
+total, dan poin selalu diambil dari respons.
+
+- `clientTxId` = UUID yang dibuat saat kasir menekan **Simpan & Bayar**; pakai nilai yang sama sebagai
+  `Idempotency-Key`. Retry jaringan dengan kunci sama → respons pertama diputar ulang (satu order).
+- Urutan error (yang pertama gagal yang dikirim): `404` cabang → `422 SHIFT_NOT_OPEN` → `422 EMPTY_CART` →
+  `422 INVALID_ITEM` → `409 PRICE_CHANGED` → `422 INSUFFICIENT_POINTS` / `REWARD_NOT_ELIGIBLE` →
+  `409 TOTAL_MISMATCH`.
+- `409 PRICE_CHANGED`: `details.services` berisi harga terbaru — perbarui price list lokal, hitung ulang
+  keranjang, minta kasir cek total.
+- `409 TOTAL_MISMATCH`: `details` = `{ subtotal, discount, total, earnedPoints }` versi server.
+- `409 DUPLICATE_TRANSACTION`: transaksi ini sudah tersimpan (`details.order`) — tampilkan order itu, jangan
+  kirim ulang.
+- `waStatus` `MENUNGGU` berarti pesan WhatsApp **masuk antrean**, belum terkirim. Jangan tampilkan
+  "terkirim" sampai server mengirim `TERKIRIM` (pengirim WhatsApp baru aktif di M5).
+
+**Advance status.** Kirim status yang sedang dilihat kasir sebagai `fromStatus`. `409 STATUS_CHANGED`
+berarti tablet lain sudah memajukannya — ganti order di layar dengan `details.order`. Status hanya maju
+satu langkah `DITERIMA → PROSES → SIAP → SELESAI`.
+
+`Order` = `{ id, number, branchId, businessDate, customerId, customerName, customerPhone, items: [{ serviceId,
+name, qty, unit, unitPrice, subtotal }], note, subtotal, discount, total, rewardId, rewardName, redeemedPoints,
+earnedPoints, payment, status, waStatus, capturedAt, createdAt, statusChangedAt, shiftId, staffId, source,
+flags, version }`. Walk-in: `customerName = "Tanpa nama"`, `customerPhone = "—"`.
+
+### 8.7 Antrean offline — `POST /api/v1/orders/sync`
+
+Header `Idempotency-Key`: satu kunci per isi batch — batch yang sama dikirim ulang karena timeout memakai
+kunci yang sama; isi batch berubah → kunci baru. Body `{ transactions: [...] }`, **maksimal 50**, urut
+`capturedAt`:
+
+```json
+{
+  "clientTxId": "a1…", "capturedAt": "2026-09-15T03:12:00.000Z", "shiftId": "s1…", "staffId": "u1…",
+  "customerId": null,
+  "newCustomer": { "id": "c9…", "name": "Rina Kusuma", "phone": "0838-7712-4409", "optIn": true },
+  "items": [ { "serviceId": "ck…", "qty": 6, "unitPrice": 7000 } ],
+  "payment": "TRANSFER", "note": ""
+}
+```
+
+Respons `{ results: [{ clientTxId, status, order, error, customerIdMapping }], summary: { created,
+duplicates, rejected, total, points } }`, urut sama dengan request.
+
+| `status` | Tindakan klien |
+|---|---|
+| `CREATED` | Hapus dari antrean; simpan `order` dari server (nomor order final ada di sini) |
+| `DUPLICATE` | Hapus dari antrean — sudah tercatat sebelumnya; simpan `order` |
+| `REJECTED` | Biarkan di antrean, tampilkan `error.message` |
+
+- Transaksi offline **sudah dibayar**, jadi server hampir selalu menerimanya: shift yang sudah ditutup,
+  harga yang berubah, atau layanan yang dinonaktifkan hanya diberi `flags` untuk laporan owner.
+- Ditolak hanya bila: jam tablet lebih maju > 5 menit (`CAPTURED_IN_FUTURE` — cek jam tablet dengan
+  `serverTime` heartbeat), ada redeem poin (`REDEEM_OFFLINE`), keranjang kosong, layanan tidak dikenal,
+  `qty`/harga tidak valid, `customerId` tidak ada, atau data customer baru tidak valid.
+- `customerIdMapping = { clientId, serverId }`: nomor HP customer baru ternyata sudah terdaftar — ganti
+  semua referensi `clientId` di Room dengan `serverId`.
+- Poin dihitung dengan rate yang berlaku saat `capturedAt`, dan nomor order mengikuti tanggal
+  `capturedAt`.
+- Sync antrean **sebelum** menutup shift.
+
+### 8.8 Shift & kas
+
+| Method & path | Akses | Body / query | Respons |
+|---|---|---|---|
+| `GET /api/v1/shifts/current` | K/O | `?branchId=` (owner) | `{ shift \| null, entries: [CashEntry] }` — shift terakhir, terbuka atau tertutup |
+| `GET /api/v1/shifts/latest` | K/O | — | `{ items: [Shift] }` — satu per cabang (kasir: cabangnya) |
+| `GET /api/v1/shifts` | O | `?branchId=&from=&to=&limit=&cursor=` | `{ items: [Shift], nextCursor }` |
+| `POST /api/v1/shifts` | K/O + `Idempotency-Key` | `{ openingCash, staffProof }` | `201 { shift, session \| null }` |
+| `POST /api/v1/shifts/{id}/cash-entries` | K/O + `Idempotency-Key` | `{ direction: IN \| OUT, label, amount }` | `201 { entry, shift }` |
+| `PUT /api/v1/shifts/{id}/counted-cash` | K/O | `{ countedCash }` | `{ shift }` — panggil dengan *debounce* ≥ 500 ms |
+| `POST /api/v1/shifts/{id}/close` | K/O + `Idempotency-Key` | `{ countedCash }` | `{ shift, recap: { expected, actual, diff } }` |
+
+**Buka shift**: dialog PIN memanggil `POST /auth/verify-pin` untuk staff yang dipilih, lalu kirim
+`staffProof` ke `POST /shifts` dalam 5 menit. Staff pada proof menjadi pembuka shift. Bila itu **bukan**
+staff yang sedang login di tablet, respons membawa `session` (bentuk sama dengan `pin-login`): ganti semua
+token dengan yang baru — sesi lama sudah berakhir. Error: `BRANCH_INACTIVE`, `409 SHIFT_ALREADY_OPEN`,
+`OPENING_CASH_REQUIRED`, `STAFF_PROOF_INVALID` (minta PIN lagi).
+
+`Shift` = `{ id, branchId, open, openedByStaffId, openedByName, openedAt, closedAt, closedByStaffId,
+openingCash, cashSales, transferSales, txCount, pointsIssued, countedCash, expectedCash, recap, version }`.
+`expectedCash` = modal awal + penjualan tunai + kas masuk − kas keluar. `CashEntry.amount` bertanda (kas
+keluar negatif); entri `SALE` dibuat server untuk setiap order tunai.
+
+### 8.9 Cache tablet & heartbeat
+
+| Method & path | Akses | Body / query | Respons |
+|---|---|---|---|
+| `GET /api/v1/sync/bootstrap` | K/O | — | `{ data: { branches, staff, services, rewards, loyaltyRates, customers, orders, shifts }, cursor }` |
+| `GET /api/v1/sync/changes` | K/O | `?since=<cursor>` | `{ changes: { …koleksi yang sama… }, nextCursor, hasMore }` |
+| `POST /api/v1/devices/heartbeat` | K/O | `{ pendingCount, appVersion, online }` | `{ serverTime }` |
+
+- **Bootstrap** sekali setelah login (atau bila Room kosong), simpan `cursor`.
+- **Changes** saat app aktif tiap 15–30 detik dan setelah setiap mutasi. Tulis setiap baris dengan
+  **upsert** berdasarkan `id` — satu baris kadang datang dua kali, itu normal. Simpan `nextCursor`; bila
+  `hasMore = true`, langsung panggil lagi dengan cursor itu.
+- `400 VALIDATION_ERROR` pada `changes` = cursor tidak dikenal → ulangi dari bootstrap.
+- Baris nonaktif (layanan, reward, staff) tetap dikirim dengan `active: false` — sembunyikan di UI, jangan
+  hapus.
+- **Heartbeat** tiap 60 detik dengan jumlah transaksi di antrean offline (`pendingCount`, wajib). Bila
+  `serverTime` beda jauh dari jam tablet, peringatkan kasir sebelum mencatat transaksi offline.
+
 ## 9. Batas & kunci
 
 | Batas | Nilai | Respons |
@@ -412,7 +526,11 @@ tampilan `0812-3390-4471`; klien boleh mengirim `+62 812…`, `0812 3390 4471`, 
 | Request umum per tablet | 120 per menit | `429 RATE_LIMITED` |
 | Access token | 60 menit | `401 TOKEN_EXPIRED` |
 | Sesi (refresh token) | 18 jam sejak login PIN | `401 UNAUTHENTICATED` |
-| `staffProof` | 5 menit, sekali pakai | — |
+| `staffProof` | 5 menit, sekali pakai | `422 STAFF_PROOF_INVALID` |
+| Transaksi per `POST /orders/sync` | 50 | `400 VALIDATION_ERROR` |
+| Baris per `GET /sync/changes` | 500 | `hasMore: true` |
+| `Idempotency-Key` disimpan | 7 hari | kunci sama + body beda → `409 IDEMPOTENCY_MISMATCH` |
+| Jam tablet vs server (offline) | maks. 5 menit lebih maju | `CAPTURED_IN_FUTURE` per transaksi |
 
 Tablet di satu toko biasanya berbagi satu jaringan, jadi hindari percobaan login otomatis berulang
 (mis. retry otomatis saat error) supaya kuota 20 percobaan per 5 menit tidak habis.
@@ -453,7 +571,7 @@ curl -X POST http://localhost:8080/api/v1/auth/pin-login \
   -d '{"branchId":"<id cabang dari login-options>","pin":"1234"}'
 ```
 
-## 11. Pemetaan use case klien → endpoint (M1)
+## 11. Pemetaan use case klien → endpoint
 
 | Use case / komponen klien | Endpoint | Catatan |
 |---|---|---|
@@ -472,6 +590,19 @@ curl -X POST http://localhost:8080/api/v1/auth/pin-login \
 | `AddRewardUseCase` / `ToggleRewardUseCase` | `POST /rewards` / `PATCH /rewards/{id}` | Toggle mengirim nilai `active` tujuan, bukan membalik |
 | `RegisterCustomerUseCase` | `POST /customers` | |
 | `PosState.customerMatches` | `GET /customers?q=` | |
+| `PlaceOrderUseCase` (online) | `POST /orders` | Simpan hasil server, bukan hitungan lokal |
+| `PlaceOrderUseCase` (offline) + `SyncPendingTransactionsUseCase` | antrean Room + `POST /orders/sync` | Hapus aturan "harus ada shift terbuka" saat sync |
+| `CalculateCartTotalsUseCase` | lokal, untuk tampilan; diverifikasi server lewat `expectedTotal` | |
+| `NextOrderIdUseCase` | `GET /orders/next-number` | Perkiraan saja |
+| `OrdersViewModel` | `GET /orders` | |
+| `AdvanceOrderStatusUseCase` | `POST /orders/{id}/advance` | Jangan set `waStatus = TERKIRIM` di klien (T6) |
+| `ShiftViewModel` | `GET /shifts/current` | |
+| `observeLatestShifts` | `GET /shifts/latest` | |
+| `OpenShiftUseCase` | `POST /auth/verify-pin` → `POST /shifts` | Ganti token bila `session` tidak `null` |
+| `RecordCashEntryUseCase` | `POST /shifts/{id}/cash-entries` | |
+| `updateCountedCash` | `PUT /shifts/{id}/counted-cash` | Debounce ≥ 500 ms |
+| `CloseShiftUseCase` | `POST /shifts/{id}/close` | Wajib online; sync antrean dulu |
+| Repository `Flow` Room | `GET /sync/bootstrap` + `GET /sync/changes` | Upsert |
 
 Semua endpoint toggle (`PATCH …/{id}` dengan `{ "active": … }`) menerima **nilai tujuan**. Mengirim nilai
 yang sama dengan saat ini aman: respons `changed: false`, tanpa audit.
@@ -480,7 +611,6 @@ yang sama dengan saat ini aman: respons `changed: false`, tanpa audit.
 
 | Milestone | Endpoint |
 |---|---|
-| M2 Transaksi | `/orders`, `/orders/sync`, `/orders/{id}/advance`, `/orders/next-number`, `/shifts…`, `/sync/bootstrap`, `/sync/changes`, `/devices/heartbeat` |
 | M3 Laporan & impor | `/reports/dashboard`, `/reports/daily-sales`, `/audit`, `/customer-imports…` |
 | M5 WhatsApp | `/wa/failures…`, `/wa/summary`, `/wa/templates` |
 
@@ -491,3 +621,4 @@ Endpoint yang belum ada membalas `404 NOT_FOUND`.
 | Tanggal | Perubahan |
 |---|---|
 | 14 September 2026 | Versi pertama untuk M1. Login tanpa aktivasi perangkat (`X-Device-Id` menggantikan token perangkat). |
+| 15 September 2026 | M2: order, antrean offline, shift & kas, cache tablet (`/sync/bootstrap`, `/sync/changes`), heartbeat. Mengacu PRD Draft 1.2. |

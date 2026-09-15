@@ -7,6 +7,7 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.max
 import org.jetbrains.exposed.v1.core.neq
@@ -73,6 +74,25 @@ class StaffRepository {
                 (StaffTable.active eq true) and ((StaffTable.branchId eq branchId) or StaffTable.branchId.isNull())
             }.orderBy(StaffTable.sortOrder to SortOrder.ASC, StaffTable.name to SortOrder.ASC)
             .map { it.toStaff() }
+
+    /** Every account — active or not — that may work at [branchId]: its cashiers plus every owner. */
+    fun findAllWorkingAt(branchId: UUID): List<StaffRecord> =
+        StaffTable
+            .selectAll()
+            .where { (StaffTable.branchId eq branchId) or StaffTable.branchId.isNull() }
+            .orderBy(StaffTable.sortOrder to SortOrder.ASC, StaffTable.name to SortOrder.ASC)
+            .map { it.toStaff() }
+
+    fun findByIds(ids: Collection<UUID>): List<StaffRecord> =
+        if (ids.isEmpty()) {
+            emptyList()
+        } else {
+            StaffTable
+                .selectAll()
+                .where {
+                    StaffTable.id inList ids
+                }.map { it.toStaff() }
+        }
 
     fun findByPinLookup(lookup: String): List<StaffRecord> =
         StaffTable

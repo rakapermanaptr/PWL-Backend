@@ -106,5 +106,4 @@ fun ServiceRecord.toDto() = ServiceDto(id.toString(), category.name, name, price
 
 fun RewardRecord.toDto() = RewardDto(id.toString(), name, cost, value, note, minSubtotal, usedCount, active)
 
-private fun LoyaltyRateRecord.toDto() =
-    LoyaltyRateDto(id.toString(), rupiahPerStep, pointsPerStep, effectiveFrom.toApi())
+fun LoyaltyRateRecord.toDto() = LoyaltyRateDto(id.toString(), rupiahPerStep, pointsPerStep, effectiveFrom.toApi())

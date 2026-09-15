@@ -28,9 +28,14 @@ object ErrorCodes {
     const val BRANCH_IN_USE = "BRANCH_IN_USE"
     const val OWNER_ONLY = "OWNER_ONLY"
 
-    // M1 additions — not in Lampiran B yet; recorded in docs/prd-gaps-m1.md for the PRD and Android.
+    // M1 additions — PRD Draft 1.2 Lampiran B (decision history in docs/prd-gaps-m1.md).
     const val DEVICE_UNAUTHORIZED = "DEVICE_UNAUTHORIZED"
     const val STAFF_REQUIRED = "STAFF_REQUIRED"
+
+    // M2 additions — PRD Draft 1.2 Lampiran B (decision history in docs/prd-gaps-m2.md).
+    const val STAFF_PROOF_INVALID = "STAFF_PROOF_INVALID"
+    const val CAPTURED_IN_FUTURE = "CAPTURED_IN_FUTURE"
+    const val DUPLICATE_TRANSACTION = "DUPLICATE_TRANSACTION"
 
     // PIN & staff
     const val PIN_FORMAT = "PIN_FORMAT"

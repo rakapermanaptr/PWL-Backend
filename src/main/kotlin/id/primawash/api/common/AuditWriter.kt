@@ -7,8 +7,7 @@ import java.time.Clock
 import java.util.UUID
 
 /**
- * `audit_log.action_type` — PRD Lampiran C, plus the M1 additions recorded in
- * `docs/prd-gaps-m1.md` (marked below) that still need to be copied into the PRD.
+ * `audit_log.action_type` — PRD Lampiran C (Draft 1.2), including the M1 addition marked below.
  */
 enum class AuditActionType {
     LOGIN,

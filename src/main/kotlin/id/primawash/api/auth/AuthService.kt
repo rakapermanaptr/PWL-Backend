@@ -417,6 +417,61 @@ class AuthService(
             )
         }
 
+    // ---- Used by ShiftService, inside its transaction ---------------------------------------------
+
+    /**
+     * Spends a `staffProof` from `verify-pin` (PRD §8.7): it must exist, be unused and unexpired, have
+     * been issued on this tablet for this branch, and its staff member must still be active and allowed
+     * to work here. A valid proof is marked used in the caller's transaction — if that transaction rolls
+     * back (e.g. `SHIFT_ALREADY_OPEN`), the proof stays usable. Returns null for any invalid proof.
+     */
+    fun consumeStaffProof(
+        principal: StaffPrincipal,
+        proof: String?,
+    ): StaffRecord? {
+        if (proof == null || !proof.startsWith(PROOF_PREFIX)) return null
+        val now = clock.instant()
+        val record =
+            repository
+                .findStaffProofForUpdate(SecureTokens.sha256Hex(proof))
+                ?.takeIf {
+                    it.usedAt == null &&
+                        it.expiresAt.isAfter(now) &&
+                        it.deviceId == principal.deviceId &&
+                        it.branchId == principal.branchId
+                } ?: return null
+        val member = staff.find(record.staffId)?.takeIf { it.active && it.canWorkAt(principal.branchId) } ?: return null
+        repository.markStaffProofUsed(record.id, now)
+        return member
+    }
+
+    /**
+     * Hands the tablet to [member] in the caller's transaction (`sessionRepository.update { staffId }` in
+     * `OpenShiftUseCase`): the caller's session ends, a new one starts, and the handover is audited as
+     * `STAFF_SWITCHED` like `switch-staff` — the member's PIN was verified moments ago by `verify-pin`.
+     */
+    fun handOverDevice(
+        principal: StaffPrincipal,
+        member: StaffRecord,
+    ): IssuedSession {
+        val branch = requireNotNull(branches.find(principal.branchId))
+        val now = clock.instant()
+        repository.revokeSession(principal.sessionId, now)
+        val issued = startSession(principal.deviceId, member, branch, now)
+        audit.write(
+            AuditEntry(
+                branchId = branch.id,
+                actor = AuditActor.staff(member.id, member.shortName, member.isOwner, principal.deviceId),
+                type = AuditActionType.STAFF_SWITCHED,
+                action = "Login PIN sebagai ${roleInBranch(member, branch)}",
+                entityType = SESSION_ENTITY,
+                entityId = issued.sessionId.toString(),
+                metadata = buildJsonObject { put("previousStaffId", principal.staffId.toString()) },
+            ),
+        )
+        return issued.session
+    }
+
     // ---- PIN verification for a chosen staff member ----------------------------------------------
 
     private fun verifyStaffInTx(
