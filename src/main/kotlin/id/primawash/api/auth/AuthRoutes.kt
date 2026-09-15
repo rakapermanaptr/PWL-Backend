@@ -122,15 +122,16 @@ private fun String?.toUuidOrNull(): UUID? = this?.let { runCatching { UUID.fromS
 
 private suspend fun ApplicationCall.respondSession(session: IssuedSession) {
     response.header(HttpHeaders.CacheControl, "no-store")
-    respond(
-        TokenResponse(
-            accessToken = session.accessToken,
-            accessTokenExpiresIn = session.accessTokenExpiresIn,
-            refreshToken = session.refreshToken,
-            refreshTokenExpiresIn = session.refreshTokenExpiresIn,
-            context = session.context.toDto(),
-        ),
-    )
+    respond(session.toDto())
 }
+
+fun IssuedSession.toDto() =
+    TokenResponse(
+        accessToken = accessToken,
+        accessTokenExpiresIn = accessTokenExpiresIn,
+        refreshToken = refreshToken,
+        refreshTokenExpiresIn = refreshTokenExpiresIn,
+        context = context.toDto(),
+    )
 
 private fun SessionContext.toDto() = SessionContextDto(staff.toDto(), branch.toDto())

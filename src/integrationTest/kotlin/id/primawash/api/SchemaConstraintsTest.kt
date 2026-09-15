@@ -26,8 +26,8 @@ class SchemaConstraintsTest : SchemaTestBase() {
             val first = openShift(connection)
             connection.createStatement().use {
                 it.execute(
-                    "UPDATE shifts SET closed_at = now(), closed_by_staff_id = '${fixtures.staffId}' " +
-                        "WHERE id = '$first'",
+                    "UPDATE shifts SET closed_at = now(), closed_by_staff_id = '${fixtures.staffId}', " +
+                        "recap_expected = 500000, recap_actual = 500000 WHERE id = '$first'",
                 )
             }
             openShift(connection)

@@ -218,6 +218,18 @@ class StaffService(
         forUpdate: Boolean = false,
     ): StaffRecord? = repository.findById(id, forUpdate)
 
+    /** Staff visible to a tablet's cache (PRD §8.10): everyone for an owner, else those who may work at [branchId]. */
+    fun findVisible(branchId: UUID?): List<StaffRecord> =
+        if (branchId ==
+            null
+        ) {
+            repository.findAll(branchId = null, active = null)
+        } else {
+            repository.findAllWorkingAt(branchId)
+        }
+
+    fun findByIds(ids: Collection<UUID>): List<StaffRecord> = repository.findByIds(ids)
+
     /** Accounts whose PIN lookup matches, active first. Several only when inactive accounts share it. */
     fun findByPin(pin: String): List<StaffRecord> = repository.findByPinLookup(pinHasher.lookup(pin))
 

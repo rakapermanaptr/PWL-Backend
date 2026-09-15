@@ -144,10 +144,12 @@ class TestApi(
         body: String? = null,
         token: String? = null,
         deviceId: String? = null,
+        idempotencyKey: String? = null,
     ): HttpResponse =
         client.post(API + path) {
             auth(token)
             device(deviceId)
+            idempotencyKey?.let { header("Idempotency-Key", it) }
             json(body)
         }
 

@@ -2,18 +2,20 @@ openapi: 3.1.0
 
 info:
   title: PWL Cashier — Backend REST API Prima Wash
-  version: 1.0.0-m1
+  version: 1.0.0-m2
   summary: REST API pusat untuk aplikasi kasir Android Prima Wash (Kasir Prima Laundry).
   description: |
     Kontrak resmi ada di `docs/PRD-Backend-REST-API.md`. Bila dokumen ini dan PRD berbeda,
     **PRD yang menang** — perbaiki file ini di PR yang sama.
 
-    **Status M1.** Terspesifikasi lengkap: health, layar login & sesi, perangkat, cabang, staff, price
-    list, loyalty, reward, dan customer. Permukaan milestone berikutnya didaftar di
+    **Status M2.** Terspesifikasi lengkap: health, layar login & sesi, perangkat, cabang, staff, price
+    list, loyalty, reward, customer (M1), serta order, sinkronisasi offline, shift & kas, cache tablet,
+    dan heartbeat (M2). Permukaan milestone berikutnya didaftar di
     `x-planned-endpoints`; tiap endpoint dipindahkan ke `paths` pada PR yang mengimplementasikannya.
     Setiap respons di `paths` divalidasi terhadap skema di berkas ini oleh `./gradlew contractTest`.
 
-    Kode & pesan error M1 yang belum ada di PRD Lampiran B/C dicatat di `docs/prd-gaps-m1.md`.
+    Kode & pesan error yang belum ada di PRD Lampiran B/C dicatat di `docs/prd-gaps-m1.md` dan
+    `docs/prd-gaps-m2.md`.
 
     Konvensi (PRD §6):
       * JSON UTF-8, field camelCase; kolom database snake_case. Nilai kosong dikirim sebagai `null`.
@@ -45,9 +47,11 @@ tags:
   - name: customer
     description: Customer & poin (PRD §8.5).
   - name: order
-    description: Order, status, sinkronisasi offline (M2).
+    description: Order, status, sinkronisasi offline (PRD §8.6, §11).
   - name: shift
-    description: Shift & kas (M2).
+    description: Shift & kas (PRD §8.7).
+  - name: sync
+    description: Cache tablet (bootstrap, delta sync) dan heartbeat (PRD §8.10).
   - name: report
     description: Dashboard, penjualan harian, audit (M3).
   - name: whatsapp
@@ -1054,6 +1058,588 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  # ---------------------------------------------------------------------------------------------
+  # Order — PRD §8.6, §9.1, §9.2
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/orders:
+    get:
+      tags: [order]
+      summary: Daftar order + jumlah per status
+      description: |
+        Terbaru dulu (`capturedAt`). **Kasir:** selalu cabang token — `branchId` diabaikan. **Owner:**
+        `branchId` tertentu, `scope=all` untuk semua cabang, atau kosong = cabang sesi. `q` cocok dengan
+        nomor order, nama customer, atau digit no HP. Tanpa `from`/`to`: order yang belum `SELESAI` plus
+        semua order 7 hari bisnis terakhir. `counts` mengikuti filter yang sama tanpa `status`.
+      operationId: listOrders
+      parameters:
+        - name: branchId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all]
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: Tanggal bisnis (WIB), inklusif.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Satu halaman order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+    post:
+      tags: [order]
+      summary: Simpan & bayar (online)
+      description: |
+        Server-authoritative: harga, total, poin, dan nomor order dihitung ulang di server; `unitPrice` dan
+        `expectedTotal` hanyalah asersi. Urutan validasi (yang pertama gagal menang):
+
+        1. cabang token ada (404 "Cabang tidak ditemukan.")
+        2. ada shift terbuka (`422 SHIFT_NOT_OPEN`)
+        3. `items` tidak kosong (`422 EMPTY_CART`)
+        4. layanan ada & aktif, `qty > 0`, kelipatan `step`, ≤ 999 (`422 INVALID_ITEM`)
+        5. `unitPrice` = price list (`409 PRICE_CHANGED`, `details.services` berisi harga terbaru)
+        6. reward aktif, customer dipilih, saldo ≥ `cost`, subtotal ≥ `minSubtotal`
+           (`422 INSUFFICIENT_POINTS` / `REWARD_NOT_ELIGIBLE`)
+        7. `expectedTotal` = total server (`409 TOTAL_MISMATCH`, `details` berisi total server)
+
+        `clientTxId` yang sudah punya order → `409 DUPLICATE_TRANSACTION` dengan `details.order`.
+
+        Efek dalam satu transaksi: nomor dari counter tanggal bisnis, `orders` + `order_items`,
+        `order_events` `CREATED`, ledger poin `EARN`/`REDEEM` + saldo & kunjungan customer, `used_count`
+        reward, total shift, `cash_entries` `SALE` (tunai), `daily_sales`, audit `ORDER_CREATED`
+        "Transaksi {nomor} · Rp… · Tunai[ · redeem n poin]" (+ `REWARD_REDEEMED`), dan baris outbox WA
+        `QUEUED` (`OPT_IN_CONFIRM` sekali per opt-in, lalu `STRUK_DIGITAL`) bila customer opt-in saat ini.
+      operationId: placeOrder
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaceOrderRequest"
+            example:
+              clientTxId: 3f0c0000-0000-4000-8000-000000000001
+              customerId: 3c9d0000-0000-4000-8000-000000000001
+              items:
+                - serviceId: 5a1b0000-0000-4000-8000-000000000002
+                  qty: 4.5
+                  unitPrice: 10000
+              rewardId: 6b2c0000-0000-4000-8000-000000000002
+              payment: TUNAI
+              note: Pisahkan baju putih
+              expectedTotal: 31000
+      responses:
+        "201":
+          description: Order tersimpan; `customer` berisi saldo poin & kunjungan terbaru (null untuk walk-in).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceOrderResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/orders/sync:
+    post:
+      tags: [order]
+      summary: Kirim antrean offline (maks. 50 per request)
+      description: |
+        Transaksi ini **sudah dibayar** customer (PRD §11.2): dicatat, yang janggal ditandai, uang tidak
+        pernah hilang. Tiap transaksi diproses sendiri — satu `REJECTED` tidak menghentikan yang lain.
+
+        * `clientTxId` sudah tercatat → `DUPLICATE` + order yang ada.
+        * Ditolak hanya bila: `capturedAt` > server + 5 menit (`CAPTURED_IN_FUTURE`), ada `rewardId`
+          (`REDEEM_OFFLINE`), `items` kosong (`EMPTY_CART`), layanan tidak dikenal / `qty` / harga tidak
+          valid (`INVALID_ITEM`), `customerId` tidak ada, data customer baru tidak valid, atau cabang belum
+          pernah punya shift (`SHIFT_NOT_OPEN`). Format yang salah juga hanya menolak transaksi itu.
+        * `unitPrice` perangkat disimpan; beda dengan price list pada `capturedAt` → flag `PRICE_MISMATCH`.
+          Layanan nonaktif → `SERVICE_INACTIVE`. Lebih dari 7 hari → `STALE_CAPTURE`.
+        * Rate poin, tanggal bisnis, dan nomor order mengikuti `capturedAt`.
+        * Shift: `shiftId` bila masih terbuka → shift terbuka cabang → `shiftId` asal (atau shift terakhir
+          cabang) dengan flag `LATE_AFTER_SHIFT_CLOSE`.
+        * `newCustomer` di-upsert berdasarkan no HP; nomor yang sudah ada menang (flag
+          `CUSTOMER_PHONE_MATCHED`) dan `customerIdMapping` memetakan id tablet ke id server.
+
+        Audit `ORDER_SYNCED` per transaksi plus ringkasan "Sync {n} transaksi offline Cabang {nama} · Rp… ·
+        ID {pertama}–{terakhir}".
+      operationId: syncOfflineOrders
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncOrdersRequest"
+      responses:
+        "200":
+          description: Hasil per transaksi, urut sama dengan request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncOrdersResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/orders/next-number:
+    get:
+      tags: [order]
+      summary: Perkiraan nomor order berikutnya
+      description: Untuk header POS saja. Nomor final diambil dari counter saat order disimpan.
+      operationId: getNextOrderNumber
+      responses:
+        "200":
+          description: "`{kode cabang}-{MMdd}-{urut 3 digit}` pada tanggal bisnis hari ini (WIB)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NextNumberResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orders/{id}:
+    get:
+      tags: [order]
+      summary: Detail order + riwayat event
+      description: Kasir hanya bisa membuka order cabangnya (`403 BRANCH_SCOPE`).
+      operationId: getOrder
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "200":
+          description: Order dan event-nya, terlama dulu.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderDetailResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/orders/{id}/advance:
+    post:
+      tags: [order]
+      summary: Majukan status satu langkah
+      description: |
+        `DITERIMA → PROSES → SIAP → SELESAI`, tanpa lompat atau mundur. Urutan: order ada (404) → kasir
+        hanya cabangnya (`403 BRANCH_SCOPE`) → status saat ini = `fromStatus` (`409 STATUS_CHANGED`,
+        `details.order` berisi order terbaru) → `SELESAI` dijawab `ALREADY_COMPLETED`.
+
+        Saat menjadi `SIAP`, consent customer **saat ini** yang dibaca (T7): opt-in → pesan
+        `STATUS_SIAP_DIAMBIL` `QUEUED`, `waStatus = MENUNGGU`, `notificationQueued = true`; selain itu
+        `BELUM_OPTIN`. Audit `ORDER_STATUS_CHANGED` "Ubah status {nomor} → {label}[ · WA dijadwalkan]".
+      operationId: advanceOrder
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdvanceOrderRequest"
+            example:
+              fromStatus: PROSES
+      responses:
+        "200":
+          description: Status maju, atau order sudah selesai.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdvanceOrderResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ---------------------------------------------------------------------------------------------
+  # Shift & kas — PRD §8.7, §9.3
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/shifts:
+    get:
+      tags: [shift]
+      summary: Riwayat shift (owner)
+      description: Terbaru dulu. `from`/`to` adalah tanggal bisnis (WIB) dari `openedAt`.
+      operationId: listShifts
+      parameters:
+        - name: branchId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Satu halaman shift.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftPage"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [shift]
+      summary: Buka shift
+      description: |
+        Urutan: cabang aktif (`422 BRANCH_INACTIVE` "Cabang {nama} nonaktif — shift baru tidak bisa dibuka
+        sampai owner mengaktifkan cabang.") → belum ada shift terbuka (`409 SHIFT_ALREADY_OPEN`; dua tablet
+        bersamaan diputuskan unique index) → `openingCash > 0` (`422 OPENING_CASH_REQUIRED`) → `staffProof`
+        dari `verify-pin` di tablet ini, belum dipakai & belum kedaluwarsa (`422 STAFF_PROOF_INVALID`).
+
+        Staff pada proof yang membuka shift. Efek: shift (`countedCash` = modal awal), `cash_entries`
+        `OPENING` "Modal awal shift" / "Diinput {nama}", audit `SHIFT_OPENED` "Buka shift Cabang {nama} ·
+        modal awal Rp…", proof ditandai terpakai. Bila pembuka bukan pemilik sesi, tablet diserahkan ke
+        pembuka: sesi lama berakhir dan `session` berisi token baru (`STAFF_SWITCHED`). Respons yang
+        diputar ulang lewat `Idempotency-Key` tidak pernah berisi token (`session = null`).
+      operationId: openShift
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenShiftRequest"
+            example:
+              openingCash: 500000
+              staffProof: sp_4mQ2…
+      responses:
+        "201":
+          description: Shift terbuka.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenShiftResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/shifts/current:
+    get:
+      tags: [shift]
+      summary: Shift terakhir cabang (terbuka atau tertutup) + mutasi kas
+      description: Tanpa `branchId` = cabang sesi. Kasir yang meminta cabang lain → `403 BRANCH_SCOPE`.
+      operationId: getCurrentShift
+      parameters:
+        - name: branchId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: "`shift = null` bila cabang belum pernah membuka shift."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentShiftResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/shifts/latest:
+    get:
+      tags: [shift]
+      summary: Shift terakhir per cabang
+      description: Kasir mendapat cabangnya saja; owner semua cabang.
+      operationId: getLatestShifts
+      responses:
+        "200":
+          description: Paling banyak satu shift per cabang.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/v1/shifts/{id}/cash-entries:
+    post:
+      tags: [shift]
+      summary: Kas masuk / kas keluar
+      description: |
+        Urutan: shift ada (404) → kasir hanya cabangnya (`403 BRANCH_SCOPE`) → shift terbuka (`422
+        SHIFT_NOT_OPEN` "Shift Cabang {nama} belum dibuka.") → keterangan (`422 CASH_LABEL_REQUIRED`) →
+        `amount > 0` (`422 AMOUNT_REQUIRED`). Disimpan sebagai "Kas masuk — …" / "Kas keluar — …", jumlah
+        bertanda (keluar negatif), catatan "Diinput {nama}". Audit `CASH_IN`/`CASH_OUT` "Kas keluar
+        Rp180.000 — beli deterjen".
+      operationId: recordCashEntry
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CashEntryRequest"
+            example:
+              direction: OUT
+              label: beli deterjen
+              amount: 180000
+      responses:
+        "201":
+          description: Entri kas dan shift dengan `expectedCash` terbaru.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CashEntryResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/BusinessRule"
+
+  /api/v1/shifts/{id}/counted-cash:
+    put:
+      tags: [shift]
+      summary: Simpan hitungan uang fisik sementara
+      description: |
+        Dipanggil saat kasir mengetik (klien *debounce* ≥ 500 ms). Tidak diaudit — hitungan final dibekukan
+        dan diaudit oleh `close`. Shift tertutup → `409 SHIFT_CLOSED`.
+      operationId: updateCountedCash
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CountedCashRequest"
+      responses:
+        "200":
+          description: Shift setelah hitungan disimpan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShiftResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/shifts/{id}/close:
+    post:
+      tags: [shift]
+      summary: Tutup shift & bekukan rekap
+      description: |
+        Urutan: shift ada (404) → kasir hanya cabangnya (`403 BRANCH_SCOPE`) → masih terbuka (`409
+        SHIFT_CLOSED` "Shift Cabang {nama} sudah ditutup."). Rekap §9.3: `expected` = modal awal + penjualan
+        tunai + kas masuk − kas keluar; `actual` = `countedCash`; `diff = actual − expected`. Audit
+        `SHIFT_CLOSED` "Tutup shift Cabang {nama} · kas cocok" / "· selisih Rp8.000". Sync antrean offline
+        dulu; transaksi yang tiba sesudahnya tetap dicatat dengan flag `LATE_AFTER_SHIFT_CLOSE`.
+      operationId: closeShift
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CountedCashRequest"
+            example:
+              countedCash: 1624000
+      responses:
+        "200":
+          description: Shift tertutup dan rekapnya.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloseShiftResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  # ---------------------------------------------------------------------------------------------
+  # Sinkronisasi cache klien — PRD §8.10
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/sync/bootstrap:
+    get:
+      tags: [sync]
+      summary: Snapshot awal cache tablet
+      description: |
+        Cabang, staff (field publik), seluruh katalog (termasuk nonaktif), rate poin saat ini, customer,
+        order aktif cabang sesi (belum `SELESAI` + 7 hari terakhir), dan shift terakhir per cabang dalam
+        scope (kasir: cabangnya; owner: semua). `cursor` diambil sebelum data dibaca — perubahan yang
+        commit selama snapshot akan terkirim lagi oleh `changes` berikutnya.
+      operationId: syncBootstrap
+      responses:
+        "200":
+          description: Snapshot dan cursor untuk `GET /sync/changes`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BootstrapResponse"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/v1/sync/changes:
+    get:
+      tags: [sync]
+      summary: Baris yang berubah sejak cursor
+      description: |
+        Paling banyak 500 baris per halaman, lintas koleksi. `hasMore = true` → panggil lagi segera dengan
+        `nextCursor`. Cursor adalah watermark id transaksi (V5), bukan `updated_at`: perubahan yang commit
+        belakangan tidak pernah terlewat, tetapi satu baris kadang terkirim dua kali — klien cukup upsert.
+        Scope sama dengan bootstrap. Cursor yang tidak dikenal → `400` (muat ulang lewat bootstrap).
+      operationId: syncChanges
+      parameters:
+        - name: since
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Perubahan per koleksi.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangesResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/v1/devices/heartbeat:
+    post:
+      tags: [sync]
+      summary: Heartbeat tablet (tiap 60 detik)
+      description: |
+        Mencatat jumlah antrean offline (`pendingSync` di dashboard owner), versi aplikasi, dan waktu
+        terakhir terlihat. Tidak diaudit. `serverTime` membantu tablet mendeteksi jam yang salah sebelum
+        mencap `capturedAt` transaksi offline.
+      operationId: deviceHeartbeat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HeartbeatRequest"
+            example:
+              pendingCount: 3
+              appVersion: 1.4.0
+              online: true
+      responses:
+        "200":
+          description: Tercatat.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HeartbeatResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
 components:
   securitySchemes:
     staffToken:
@@ -1876,6 +2462,755 @@ components:
         nextCursor:
           type: [string, "null"]
 
+    # ---- Order ---------------------------------------------------------------------------------
+    OrderStatus:
+      type: string
+      enum: [DITERIMA, PROSES, SIAP, SELESAI]
+
+    OrderItem:
+      type: object
+      required: [serviceId, name, qty, unit, unitPrice, subtotal]
+      description: Snapshot saat order dibuat — tidak ikut berubah bila price list berubah.
+      properties:
+        serviceId:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        qty:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 999
+        unit:
+          type: string
+        unitPrice:
+          type: integer
+          minimum: 1
+        subtotal:
+          type: integer
+          minimum: 0
+          description: round_half_up(qty × unitPrice).
+
+    Order:
+      type: object
+      required:
+        - id
+        - number
+        - branchId
+        - businessDate
+        - customerId
+        - customerName
+        - customerPhone
+        - items
+        - note
+        - subtotal
+        - discount
+        - total
+        - rewardId
+        - rewardName
+        - redeemedPoints
+        - earnedPoints
+        - payment
+        - status
+        - waStatus
+        - capturedAt
+        - createdAt
+        - statusChangedAt
+        - shiftId
+        - staffId
+        - source
+        - flags
+        - version
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        number:
+          type: string
+          pattern: "^[A-Z]{2,5}-\\d{4}-\\d{3,}$"
+          description: Nomor tampilan, unik per (cabang, tanggal bisnis) — mis. `TBT-0915-001`.
+        branchId:
+          $ref: "#/components/schemas/Uuid"
+        businessDate:
+          type: string
+          format: date
+          description: Tanggal bisnis WIB dari `capturedAt`.
+        customerId:
+          $ref: "#/components/schemas/NullableUuid"
+        customerName:
+          type: string
+          description: '"Tanpa nama" untuk walk-in.'
+        customerPhone:
+          type: string
+          description: '"—" untuk walk-in.'
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        note:
+          type: string
+        subtotal:
+          type: integer
+          minimum: 0
+        discount:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        rewardId:
+          $ref: "#/components/schemas/NullableUuid"
+        rewardName:
+          type: [string, "null"]
+        redeemedPoints:
+          type: integer
+          minimum: 0
+        earnedPoints:
+          type: integer
+          minimum: 0
+        payment:
+          type: string
+          enum: [TUNAI, TRANSFER]
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        waStatus:
+          type: string
+          enum: [TERKIRIM, MENUNGGU, GAGAL, BELUM_OPTIN]
+          description: |
+            Status notifikasi order. `MENUNGGU` = pesan antre di outbox. `TERKIRIM` hanya setelah Meta
+            mengonfirmasi (M5) — tidak pernah diisi tanpa pengiriman nyata.
+        capturedAt:
+          $ref: "#/components/schemas/Timestamp"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        statusChangedAt:
+          $ref: "#/components/schemas/Timestamp"
+        shiftId:
+          $ref: "#/components/schemas/Uuid"
+        staffId:
+          $ref: "#/components/schemas/Uuid"
+        source:
+          type: string
+          enum: [ONLINE, OFFLINE_SYNC]
+        flags:
+          type: array
+          description: Hanya untuk `OFFLINE_SYNC`; tampil di laporan owner.
+          items:
+            type: string
+            enum: [LATE_AFTER_SHIFT_CLOSE, PRICE_MISMATCH, SERVICE_INACTIVE, STALE_CAPTURE, CUSTOMER_PHONE_MATCHED]
+        version:
+          type: integer
+          minimum: 1
+
+    CartItemRequest:
+      type: object
+      required: [serviceId, qty, unitPrice]
+      properties:
+        serviceId:
+          $ref: "#/components/schemas/Uuid"
+        qty:
+          type: number
+        unitPrice:
+          type: integer
+          description: Harga yang dilihat kasir — diverifikasi, tidak disimpan dari klien.
+
+    PlaceOrderRequest:
+      type: object
+      required: [clientTxId, items, payment, expectedTotal]
+      properties:
+        clientTxId:
+          $ref: "#/components/schemas/Uuid"
+        customerId:
+          $ref: "#/components/schemas/NullableUuid"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItemRequest"
+        rewardId:
+          $ref: "#/components/schemas/NullableUuid"
+        payment:
+          type: string
+          enum: [TUNAI, TRANSFER]
+        note:
+          type: [string, "null"]
+        expectedTotal:
+          type: integer
+          description: Total yang dilihat kasir — diverifikasi terhadap total server.
+
+    CustomerBalance:
+      type: object
+      required: [id, points, visits]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        points:
+          type: integer
+          minimum: 0
+        visits:
+          type: integer
+          minimum: 0
+
+    PlaceOrderResponse:
+      type: object
+      required: [order, customer]
+      properties:
+        order:
+          $ref: "#/components/schemas/Order"
+        customer:
+          oneOf:
+            - $ref: "#/components/schemas/CustomerBalance"
+            - type: "null"
+
+    OrderCounts:
+      type: object
+      required: [ALL, DITERIMA, PROSES, SIAP, SELESAI]
+      properties:
+        ALL:
+          type: integer
+          minimum: 0
+        DITERIMA:
+          type: integer
+          minimum: 0
+        PROSES:
+          type: integer
+          minimum: 0
+        SIAP:
+          type: integer
+          minimum: 0
+        SELESAI:
+          type: integer
+          minimum: 0
+
+    OrderPage:
+      type: object
+      required: [items, nextCursor, counts]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        nextCursor:
+          type: [string, "null"]
+        counts:
+          $ref: "#/components/schemas/OrderCounts"
+
+    OrderEvent:
+      type: object
+      required: [id, type, fromStatus, toStatus, staffId, deviceId, createdAt, payload]
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+          enum: [CREATED, STATUS_CHANGED, WA_STATUS_CHANGED]
+        fromStatus:
+          type: [string, "null"]
+        toStatus:
+          type: [string, "null"]
+        staffId:
+          $ref: "#/components/schemas/NullableUuid"
+        deviceId:
+          $ref: "#/components/schemas/NullableUuid"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+        payload:
+          type: object
+          additionalProperties: true
+
+    OrderDetailResponse:
+      type: object
+      required: [order, events]
+      properties:
+        order:
+          $ref: "#/components/schemas/Order"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderEvent"
+
+    AdvanceOrderRequest:
+      type: object
+      required: [fromStatus]
+      properties:
+        fromStatus:
+          $ref: "#/components/schemas/OrderStatus"
+
+    AdvanceOrderResponse:
+      type: object
+      required: [result, order, notificationQueued]
+      properties:
+        result:
+          type: string
+          enum: [ADVANCED, ALREADY_COMPLETED]
+        order:
+          $ref: "#/components/schemas/Order"
+        notificationQueued:
+          type: boolean
+          description: Pesan "siap diambil" masuk antrean outbox — dijadwalkan, bukan terkirim.
+
+    NextNumberResponse:
+      type: object
+      required: [number, businessDate]
+      properties:
+        number:
+          type: string
+          example: TBT-0915-016
+        businessDate:
+          type: string
+          format: date
+
+    # ---- Sinkronisasi offline --------------------------------------------------------------------
+    SyncItemRequest:
+      type: object
+      required: [serviceId, qty, unitPrice]
+      properties:
+        serviceId:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: [string, "null"]
+          description: Informasi saja; nama dari price list server yang disimpan.
+        qty:
+          type: number
+        unit:
+          type: [string, "null"]
+        unitPrice:
+          type: integer
+          description: Harga yang dibayar customer — disimpan apa adanya.
+
+    NewCustomerRequest:
+      type: object
+      required: [name, phone]
+      properties:
+        id:
+          $ref: "#/components/schemas/NullableUuid"
+        name:
+          type: string
+        phone:
+          type: string
+        optIn:
+          type: boolean
+          default: false
+
+    SyncTransactionRequest:
+      type: object
+      required: [clientTxId, capturedAt, items, payment]
+      properties:
+        clientTxId:
+          $ref: "#/components/schemas/Uuid"
+        capturedAt:
+          $ref: "#/components/schemas/Timestamp"
+        shiftId:
+          $ref: "#/components/schemas/NullableUuid"
+        staffId:
+          $ref: "#/components/schemas/NullableUuid"
+          description: Staff yang melayani; bila tidak dikenal atau bukan staff cabang ini, staff sesi yang dipakai.
+        customerId:
+          $ref: "#/components/schemas/NullableUuid"
+        newCustomer:
+          oneOf:
+            - $ref: "#/components/schemas/NewCustomerRequest"
+            - type: "null"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SyncItemRequest"
+        rewardId:
+          $ref: "#/components/schemas/NullableUuid"
+          description: Selalu ditolak (`REDEEM_OFFLINE`) — redeem poin butuh koneksi.
+        payment:
+          type: string
+          enum: [TUNAI, TRANSFER]
+        note:
+          type: [string, "null"]
+
+    SyncOrdersRequest:
+      type: object
+      required: [transactions]
+      properties:
+        transactions:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/SyncTransactionRequest"
+
+    SyncError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+    CustomerIdMapping:
+      type: object
+      required: [clientId, serverId]
+      properties:
+        clientId:
+          $ref: "#/components/schemas/Uuid"
+        serverId:
+          $ref: "#/components/schemas/Uuid"
+
+    SyncResult:
+      type: object
+      required: [clientTxId, status, order, error, customerIdMapping]
+      properties:
+        clientTxId:
+          $ref: "#/components/schemas/NullableUuid"
+        status:
+          type: string
+          enum: [CREATED, DUPLICATE, REJECTED]
+          description: Klien menghapus `CREATED` dan `DUPLICATE` dari antrean; `REJECTED` tetap dengan pesannya.
+        order:
+          oneOf:
+            - $ref: "#/components/schemas/Order"
+            - type: "null"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/SyncError"
+            - type: "null"
+        customerIdMapping:
+          oneOf:
+            - $ref: "#/components/schemas/CustomerIdMapping"
+            - type: "null"
+
+    SyncSummary:
+      type: object
+      required: [created, duplicates, rejected, total, points]
+      properties:
+        created:
+          type: integer
+          minimum: 0
+        duplicates:
+          type: integer
+          minimum: 0
+        rejected:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+          description: Total rupiah transaksi `CREATED`.
+        points:
+          type: integer
+          minimum: 0
+
+    SyncOrdersResponse:
+      type: object
+      required: [results, summary]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SyncResult"
+        summary:
+          $ref: "#/components/schemas/SyncSummary"
+
+    # ---- Shift & kas ---------------------------------------------------------------------------
+    Recap:
+      type: object
+      required: [expected, actual, diff]
+      properties:
+        expected:
+          type: integer
+        actual:
+          type: integer
+          minimum: 0
+        diff:
+          type: integer
+          description: "`actual − expected`; negatif = kas kurang."
+
+    Shift:
+      type: object
+      required:
+        - id
+        - branchId
+        - open
+        - openedByStaffId
+        - openedByName
+        - openedAt
+        - closedAt
+        - closedByStaffId
+        - openingCash
+        - cashSales
+        - transferSales
+        - txCount
+        - pointsIssued
+        - countedCash
+        - expectedCash
+        - recap
+        - version
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        branchId:
+          $ref: "#/components/schemas/Uuid"
+        open:
+          type: boolean
+        openedByStaffId:
+          $ref: "#/components/schemas/Uuid"
+        openedByName:
+          type: string
+        openedAt:
+          $ref: "#/components/schemas/Timestamp"
+        closedAt:
+          $ref: "#/components/schemas/NullableTimestamp"
+        closedByStaffId:
+          $ref: "#/components/schemas/NullableUuid"
+        openingCash:
+          type: integer
+          minimum: 1
+        cashSales:
+          type: integer
+          minimum: 0
+        transferSales:
+          type: integer
+          minimum: 0
+        txCount:
+          type: integer
+          minimum: 0
+        pointsIssued:
+          type: integer
+          minimum: 0
+        countedCash:
+          type: integer
+          minimum: 0
+          description: Hitungan uang fisik terakhir (awal = modal awal).
+        expectedCash:
+          type: integer
+          description: Modal awal + penjualan tunai + kas masuk − kas keluar, dihitung sekarang (§9.3).
+        recap:
+          oneOf:
+            - $ref: "#/components/schemas/Recap"
+            - type: "null"
+          description: Dibekukan saat shift ditutup; `null` selama terbuka.
+        version:
+          type: integer
+          minimum: 1
+
+    CashEntry:
+      type: object
+      required: [id, shiftId, kind, label, note, amount, orderId, staffId, createdAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        shiftId:
+          $ref: "#/components/schemas/Uuid"
+        kind:
+          type: string
+          enum: [OPENING, CASH_IN, CASH_OUT, SALE]
+        label:
+          type: string
+        note:
+          type: string
+        amount:
+          type: integer
+          description: Bertanda; negatif = uang keluar.
+        orderId:
+          $ref: "#/components/schemas/NullableUuid"
+        staffId:
+          $ref: "#/components/schemas/Uuid"
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    CurrentShiftResponse:
+      type: object
+      required: [shift, entries]
+      properties:
+        shift:
+          oneOf:
+            - $ref: "#/components/schemas/Shift"
+            - type: "null"
+        entries:
+          type: array
+          description: Terlama dulu.
+          items:
+            $ref: "#/components/schemas/CashEntry"
+
+    ShiftListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Shift"
+
+    ShiftPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Shift"
+        nextCursor:
+          type: [string, "null"]
+
+    OpenShiftRequest:
+      type: object
+      required: [openingCash, staffProof]
+      properties:
+        openingCash:
+          type: integer
+        staffProof:
+          type: string
+          pattern: "^sp_"
+
+    OpenShiftResponse:
+      type: object
+      required: [shift, session]
+      properties:
+        shift:
+          $ref: "#/components/schemas/Shift"
+        session:
+          oneOf:
+            - $ref: "#/components/schemas/TokenResponse"
+            - type: "null"
+          description: Sesi baru untuk staff pembuka bila bukan pemilik sesi; `null` bila sama.
+
+    CashEntryRequest:
+      type: object
+      required: [direction, label, amount]
+      properties:
+        direction:
+          type: string
+          enum: [IN, OUT]
+        label:
+          type: string
+        amount:
+          type: integer
+
+    CashEntryResponse:
+      type: object
+      required: [entry, shift]
+      properties:
+        entry:
+          $ref: "#/components/schemas/CashEntry"
+        shift:
+          $ref: "#/components/schemas/Shift"
+
+    CountedCashRequest:
+      type: object
+      required: [countedCash]
+      properties:
+        countedCash:
+          type: integer
+          minimum: 0
+
+    ShiftResponse:
+      type: object
+      required: [shift]
+      properties:
+        shift:
+          $ref: "#/components/schemas/Shift"
+
+    CloseShiftResponse:
+      type: object
+      required: [shift, recap]
+      properties:
+        shift:
+          $ref: "#/components/schemas/Shift"
+        recap:
+          $ref: "#/components/schemas/Recap"
+
+    # ---- Cache tablet ----------------------------------------------------------------------------
+    SyncStaff:
+      type: object
+      required: [id, name, shortName, role, branchId, active]
+      description: Field publik staff saja — tanpa data PIN dan waktu login.
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        name:
+          type: string
+        shortName:
+          type: string
+        role:
+          type: string
+          enum: [KASIR, OWNER]
+        branchId:
+          $ref: "#/components/schemas/NullableUuid"
+        active:
+          type: boolean
+
+    SyncData:
+      type: object
+      required: [branches, staff, services, rewards, loyaltyRates, customers, orders, shifts]
+      properties:
+        branches:
+          type: array
+          items:
+            $ref: "#/components/schemas/Branch"
+        staff:
+          type: array
+          items:
+            $ref: "#/components/schemas/SyncStaff"
+        services:
+          type: array
+          items:
+            $ref: "#/components/schemas/Service"
+        rewards:
+          type: array
+          items:
+            $ref: "#/components/schemas/Reward"
+        loyaltyRates:
+          type: array
+          items:
+            $ref: "#/components/schemas/LoyaltyRate"
+        customers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        shifts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Shift"
+
+    BootstrapResponse:
+      type: object
+      required: [data, cursor]
+      properties:
+        data:
+          $ref: "#/components/schemas/SyncData"
+        cursor:
+          type: string
+          description: Kirim sebagai `since` pada `GET /sync/changes` pertama.
+
+    ChangesResponse:
+      type: object
+      required: [changes, nextCursor, hasMore]
+      properties:
+        changes:
+          $ref: "#/components/schemas/SyncData"
+        nextCursor:
+          type: string
+        hasMore:
+          type: boolean
+
+    HeartbeatRequest:
+      type: object
+      required: [pendingCount]
+      properties:
+        pendingCount:
+          type: integer
+          minimum: 0
+        appVersion:
+          type: [string, "null"]
+          maxLength: 32
+        online:
+          type: [boolean, "null"]
+
+    HeartbeatResponse:
+      type: object
+      required: [serverTime]
+      properties:
+        serverTime:
+          $ref: "#/components/schemas/Timestamp"
+
   responses:
     ValidationError:
       description: "400 — body atau parameter tidak valid secara format; `details.fields` berisi daftar field."
@@ -2018,26 +3353,6 @@ x-planned-endpoints:
     Permukaan API v1 sesuai PRD §8, dengan milestone tempat tiap endpoint dispesifikasikan penuh di
     `paths`. Daftar ini adalah rencana, bukan kontrak — yang mengikat hanyalah yang sudah ada di
     `paths`.
-  M2:
-    order:
-      - POST /api/v1/orders
-      - POST /api/v1/orders/sync
-      - GET /api/v1/orders
-      - GET /api/v1/orders/{id}
-      - POST /api/v1/orders/{id}/advance
-      - GET /api/v1/orders/next-number
-    shift:
-      - GET /api/v1/shifts/current
-      - GET /api/v1/shifts/latest
-      - POST /api/v1/shifts
-      - POST /api/v1/shifts/{id}/cash-entries
-      - PUT /api/v1/shifts/{id}/counted-cash
-      - POST /api/v1/shifts/{id}/close
-      - GET /api/v1/shifts
-    sync:
-      - GET /api/v1/sync/bootstrap
-      - GET /api/v1/sync/changes
-      - POST /api/v1/devices/heartbeat
   M3:
     report:
       - GET /api/v1/reports/dashboard

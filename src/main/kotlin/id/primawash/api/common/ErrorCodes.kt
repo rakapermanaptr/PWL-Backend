@@ -32,6 +32,11 @@ object ErrorCodes {
     const val DEVICE_UNAUTHORIZED = "DEVICE_UNAUTHORIZED"
     const val STAFF_REQUIRED = "STAFF_REQUIRED"
 
+    // M2 additions — not in Lampiran B yet; recorded in docs/prd-gaps-m2.md for the PRD and Android.
+    const val STAFF_PROOF_INVALID = "STAFF_PROOF_INVALID"
+    const val CAPTURED_IN_FUTURE = "CAPTURED_IN_FUTURE"
+    const val DUPLICATE_TRANSACTION = "DUPLICATE_TRANSACTION"
+
     // PIN & staff
     const val PIN_FORMAT = "PIN_FORMAT"
     const val PIN_UNKNOWN = "PIN_UNKNOWN"

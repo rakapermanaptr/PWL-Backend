@@ -10,6 +10,7 @@ import id.primawash.api.branch.BranchService
 import id.primawash.api.catalog.CatalogRepository
 import id.primawash.api.catalog.CatalogService
 import id.primawash.api.common.AuditWriter
+import id.primawash.api.common.IdempotencyStore
 import id.primawash.api.common.SecureTokens
 import id.primawash.api.customer.CustomerRepository
 import id.primawash.api.customer.CustomerService
@@ -17,8 +18,18 @@ import id.primawash.api.db.ExposedTransactionRunner
 import id.primawash.api.db.TransactionRunner
 import id.primawash.api.device.DeviceRepository
 import id.primawash.api.device.DeviceService
+import id.primawash.api.order.OrderRepository
+import id.primawash.api.order.OrderService
+import id.primawash.api.order.OrderSyncService
+import id.primawash.api.order.SaleRecorder
+import id.primawash.api.shift.ShiftRepository
+import id.primawash.api.shift.ShiftService
 import id.primawash.api.staff.StaffRepository
 import id.primawash.api.staff.StaffService
+import id.primawash.api.sync.SyncRepository
+import id.primawash.api.sync.SyncService
+import id.primawash.api.wa.WaRepository
+import id.primawash.api.wa.WaService
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -62,6 +73,7 @@ private fun coreModule(
         single { settings }
         single<TransactionRunner> { ExposedTransactionRunner(database) }
         single { AuditWriter(get()) }
+        single { IdempotencyStore(get()) }
         single { PinHasher(settings.pinPepper) }
         single { SecureTokens() }
         single { AccessTokens(settings.jwtSecret, get()) }
@@ -75,6 +87,10 @@ private fun featureModule(): Module =
         single { DeviceRepository() }
         single { CatalogRepository() }
         single { CustomerRepository() }
+        single { ShiftRepository() }
+        single { OrderRepository() }
+        single { WaRepository() }
+        single { SyncRepository() }
 
         single { BranchService(get(), get(), get()) }
         single { SessionService(get(), get()) }
@@ -83,4 +99,10 @@ private fun featureModule(): Module =
         single { AuthService(get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { CatalogService(get(), get(), get(), get()) }
         single { CustomerService(get(), get(), get(), get()) }
+        single { WaService(get(), get()) }
+        single { ShiftService(get(), get(), get(), get(), get(), get(), get()) }
+        single { SaleRecorder(get(), get(), get(), get(), get(), get()) }
+        single { OrderService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { OrderSyncService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { SyncService(get(), get(), get(), get(), get(), get(), get(), get()) }
     }

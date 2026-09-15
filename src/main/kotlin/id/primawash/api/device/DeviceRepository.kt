@@ -88,6 +88,19 @@ class DeviceRepository {
         }
     }
 
+    fun recordHeartbeat(
+        id: UUID,
+        pendingCount: Int,
+        appVersion: String?,
+        at: Instant,
+    ) {
+        DevicesTable.update({ DevicesTable.id eq id }) {
+            it[DevicesTable.pendingCount] = pendingCount
+            if (appVersion != null) it[DevicesTable.appVersion] = appVersion
+            it[lastSeenAt] = Timestamps.toDb(at)
+        }
+    }
+
     fun updatePinLock(
         id: UUID,
         lockedUntil: Instant?,

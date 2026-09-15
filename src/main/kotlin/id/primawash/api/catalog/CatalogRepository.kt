@@ -7,10 +7,14 @@ import id.primawash.api.db.ServicePriceHistoryTable
 import id.primawash.api.db.ServicesTable
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.lowerCase
 import org.jetbrains.exposed.v1.core.max
+import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
 import org.jetbrains.exposed.v1.jdbc.Query
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -50,6 +54,7 @@ data class RewardRecord(
 )
 
 /** Exposed queries for the global price list, loyalty rate history and reward catalog. */
+@Suppress("TooManyFunctions")
 class CatalogRepository {
     // ---- Services ------------------------------------------------------------------------------
 
@@ -123,6 +128,35 @@ class CatalogRepository {
         ServicesTable.update({ ServicesTable.id eq id }) { it[ServicesTable.active] = active }
     }
 
+    fun findServicesByIds(ids: Collection<UUID>): List<ServiceRecord> =
+        if (ids.isEmpty()) {
+            emptyList()
+        } else {
+            ServicesTable
+                .selectAll()
+                .where {
+                    ServicesTable.id inList ids
+                }.map { it.toService() }
+        }
+
+    /**
+     * The price of [serviceId] at [at], rebuilt from `service_price_history`: the old price of the first
+     * change made after [at], or null when the price has not changed since — then the current price holds.
+     */
+    fun priceChangedAfter(
+        serviceId: UUID,
+        at: Instant,
+    ): Long? =
+        ServicePriceHistoryTable
+            .select(ServicePriceHistoryTable.oldPrice)
+            .where {
+                (ServicePriceHistoryTable.serviceId eq serviceId) and
+                    (ServicePriceHistoryTable.changedAt greater Timestamps.toDb(at))
+            }.orderBy(ServicePriceHistoryTable.changedAt to SortOrder.ASC, ServicePriceHistoryTable.id to SortOrder.ASC)
+            .limit(1)
+            .firstOrNull()
+            ?.get(ServicePriceHistoryTable.oldPrice)
+
     // ---- Loyalty rate --------------------------------------------------------------------------
 
     /** The rate effective at [at]: the newest row with `effective_from <= at` — history, not "latest". */
@@ -133,14 +167,23 @@ class CatalogRepository {
             .orderBy(LoyaltyRatesTable.effectiveFrom to SortOrder.DESC)
             .limit(1)
             .firstOrNull()
-            ?.let {
-                LoyaltyRateRecord(
-                    id = it[LoyaltyRatesTable.id],
-                    rupiahPerStep = it[LoyaltyRatesTable.rupiahPerStep],
-                    pointsPerStep = it[LoyaltyRatesTable.pointsPerStep],
-                    effectiveFrom = Timestamps.fromDb(it[LoyaltyRatesTable.effectiveFrom]),
-                )
-            }
+            ?.toRate()
+
+    /** The first rate ever saved — for a transaction captured before any rate row existed. */
+    fun earliestRate(): LoyaltyRateRecord? =
+        LoyaltyRatesTable
+            .selectAll()
+            .orderBy(LoyaltyRatesTable.effectiveFrom to SortOrder.ASC)
+            .limit(1)
+            .firstOrNull()
+            ?.toRate()
+
+    fun findRatesByIds(ids: Collection<UUID>): List<LoyaltyRateRecord> =
+        if (ids.isEmpty()) {
+            emptyList()
+        } else {
+            LoyaltyRatesTable.selectAll().where { LoyaltyRatesTable.id inList ids }.map { it.toRate() }
+        }
 
     /** Rates are only ever inserted; the table rejects UPDATE and DELETE. */
     fun insertRate(
@@ -180,6 +223,20 @@ class CatalogRepository {
             .lockedIf(forUpdate)
             .firstOrNull()
             ?.toReward()
+
+    fun findRewardsByIds(ids: Collection<UUID>): List<RewardRecord> =
+        if (ids.isEmpty()) {
+            emptyList()
+        } else {
+            RewardsTable.selectAll().where { RewardsTable.id inList ids }.map {
+                it
+                    .toReward()
+            }
+        }
+
+    fun incrementRewardUsedCount(id: UUID) {
+        RewardsTable.update({ RewardsTable.id eq id }) { it[usedCount] = usedCount + 1 }
+    }
 
     fun insertReward(
         id: UUID,
@@ -232,6 +289,14 @@ class CatalogRepository {
             unit = this[ServicesTable.unit],
             step = this[ServicesTable.step],
             active = this[ServicesTable.active],
+        )
+
+    private fun ResultRow.toRate() =
+        LoyaltyRateRecord(
+            id = this[LoyaltyRatesTable.id],
+            rupiahPerStep = this[LoyaltyRatesTable.rupiahPerStep],
+            pointsPerStep = this[LoyaltyRatesTable.pointsPerStep],
+            effectiveFrom = Timestamps.fromDb(this[LoyaltyRatesTable.effectiveFrom]),
         )
 
     private fun ResultRow.toReward() =

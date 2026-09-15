@@ -66,6 +66,22 @@ class DeviceService(
             DeviceChange(device.copy(revokedAt = now), changed = true)
         }
 
+    /**
+     * `POST /devices/heartbeat` (PRD §8.10), every 60 seconds: the size of the tablet's offline queue (the
+     * owner dashboard's `pendingSync`), its app version and last-seen time. Not audited — it is telemetry,
+     * not a business action. Returns the server time.
+     */
+    suspend fun heartbeat(
+        id: UUID,
+        pendingCount: Int,
+        appVersion: String?,
+    ): Instant =
+        tx {
+            val now = clock.instant()
+            repository.recordHeartbeat(id, pendingCount, appVersion, now)
+            now
+        }
+
     // ---- Used by AuthService, inside its transaction -------------------------------------------
 
     /**
