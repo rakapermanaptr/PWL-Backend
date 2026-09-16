@@ -71,7 +71,7 @@ class CatalogAndCustomerFlowTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "1234",
                     ).string("accessToken")
             val items =
@@ -126,14 +126,14 @@ class CatalogAndCustomerFlowTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "1234",
                     ).string("accessToken")
             val nia =
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "BTR",
+                        "NRG",
                         "2468",
                     ).string("accessToken")
 
@@ -146,7 +146,7 @@ class CatalogAndCustomerFlowTest {
             created.status shouldBe HttpStatusCode.Created
             val customer = created.json().obj("customer")
             customer.string("phone") shouldBe "0812-3390-4471"
-            customer.string("homeBranchId") shouldBe ApiTestSupport.branchId("TBT").toString()
+            customer.string("homeBranchId") shouldBe ApiTestSupport.branchId("FMU").toString()
 
             val duplicate =
                 api
@@ -167,7 +167,7 @@ class CatalogAndCustomerFlowTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "1234",
                     ).string("accessToken")
             api.post("/customers", """{"name":"Dewi Anggraini","phone":"081233904471","optIn":true}""", siti)
@@ -203,7 +203,7 @@ class CatalogAndCustomerFlowTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "1234",
                     ).string("accessToken")
             val id =
@@ -217,7 +217,7 @@ class CatalogAndCustomerFlowTest {
                     it.execute(
                         "INSERT INTO wa_messages (branch_id, customer_id, template, to_phone) " +
                             "VALUES ('${ApiTestSupport.branchId(
-                                "TBT",
+                                "FMU",
                             )}', '$id', 'STATUS_SIAP_DIAMBIL', '6281233904471')",
                     )
                 }

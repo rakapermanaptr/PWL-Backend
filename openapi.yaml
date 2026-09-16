@@ -183,9 +183,9 @@ paths:
                 lastBranchId: 7f1c2d3e-0000-4000-8000-000000000001
                 branches:
                   - id: 7f1c2d3e-0000-4000-8000-000000000001
-                    code: TBT
-                    name: Tebet
-                    address: Jl. Tebet Raya No. 42, Jakarta Selatan
+                    code: FMU
+                    name: Familia Urban
+                    address: Ruko Arundaya, Jl. Familia Urban Blok DD. 21
                     hours: 07.00 – 21.00
                     active: true
                     cashierNames: [Siti N., Bagas A.]
@@ -222,7 +222,7 @@ paths:
         yang memicu kunci tetap mendapat error-nya sendiri, percobaan berikutnya `423`.
 
         Sukses: `last_login_at`, sesi baru (sesi lain di perangkat ini berakhir), `last_branch_id`
-        perangkat, audit `LOGIN` "Login PIN sebagai kasir Tebet di perangkat Cabang Tebet" /
+        perangkat, audit `LOGIN` "Login PIN sebagai kasir Familia Urban di perangkat Cabang Familia Urban" /
         "… sebagai owner/admin …", dan — pada login pertama sebuah tablet — `DEVICE_ACTIVATED`. Header
         `Cache-Control: no-store`.
       operationId: pinLogin
@@ -329,7 +329,7 @@ paths:
       summary: Serahkan perangkat ke staff lain
       description: |
         Validasi sama dengan verify-pin, lalu sesi pemanggil berakhir dan sesi baru terbit untuk staff
-        tsb di cabang yang sama. Audit `STAFF_SWITCHED` "Login PIN sebagai {kasir Tebet | owner/admin}".
+        tsb di cabang yang sama. Audit `STAFF_SWITCHED` "Login PIN sebagai {kasir Familia Urban | owner/admin}".
         Bila staff baru kasir, klien keluar dari layar owner.
       operationId: switchStaff
       requestBody:
@@ -476,7 +476,7 @@ paths:
         (`TARGET_REQUIRED` "Target harian tidak boleh kosong — dikembalikan ke {target lama}.") →
         cabang yang sedang dipakai perangkat pemanggil tidak bisa dinonaktifkan (`BRANCH_IN_USE`).
         Nilai sama → `changed: false` tanpa audit. Audit `BRANCH_TARGET_CHANGED` "Ubah target harian
-        Cabang Tebet: Rp5.200.000 → Rp5.500.000" dan/atau `BRANCH_TOGGLED` "Nonaktifkan Cabang {nama}".
+        Cabang Familia Urban: Rp5.200.000 → Rp5.500.000" dan/atau `BRANCH_TOGGLED` "Nonaktifkan Cabang {nama}".
         Cabang nonaktif menolak login & buka shift baru.
       operationId: updateBranch
       parameters:
@@ -552,7 +552,7 @@ paths:
         Urutan (`AddStaffUseCase`): nama wajib (`NAME_REQUIRED`) → PIN 4–6 digit (`PIN_FORMAT` "PIN harus
         4–6 digit.") → PIN tidak dipakai staff aktif lain (`PIN_TAKEN`) → kasir wajib punya cabang
         (`CASHIER_NEEDS_BRANCH`). Owner selalu `branchId = null`. `shortName` diturunkan server. Audit
-        `STAFF_ADDED` "Tambah akun staff {nama} (kasir, Cabang Tebet) · PIN dibuat". Body tidak pernah
+        `STAFF_ADDED` "Tambah akun staff {nama} (kasir, Cabang Familia Urban) · PIN dibuat". Body tidak pernah
         di-log.
       operationId: createStaff
       requestBody:
@@ -1837,7 +1837,7 @@ components:
             Kalimat Bahasa Indonesia yang ditampilkan kasir apa adanya. Teksnya disalin dari
             PRD Lampiran B — mengubah kata berarti mengubah UX, jadi butuh update PRD dan
             pemberitahuan ke tim Android.
-          example: Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi.
+          example: Shift Cabang Familia Urban belum dibuka — buka shift dulu sebelum mencatat transaksi.
         details:
           type: [object, "null"]
           additionalProperties: true
@@ -2596,7 +2596,7 @@ components:
         number:
           type: string
           pattern: "^[A-Z]{2,5}-\\d{4}-\\d{3,}$"
-          description: Nomor tampilan, unik per (cabang, tanggal bisnis) — mis. `TBT-0915-001`.
+          description: Nomor tampilan, unik per (cabang, tanggal bisnis) — mis. `FMU-0915-001`.
         branchId:
           $ref: "#/components/schemas/Uuid"
         businessDate:
@@ -2823,7 +2823,7 @@ components:
       properties:
         number:
           type: string
-          example: TBT-0915-016
+          example: FMU-0915-016
         businessDate:
           type: string
           format: date
@@ -3304,7 +3304,7 @@ components:
         action:
           type: string
           description: Kalimat Bahasa Indonesia yang ditampilkan di log audit.
-          examples: ["Buat order TBT-0915-001 — Rp45.000"]
+          examples: ["Buat order FMU-0915-001 — Rp45.000"]
         entityType:
           type: [string, "null"]
         entityId:
@@ -3571,7 +3571,7 @@ components:
           example:
             error:
               code: STAFF_WRONG_BRANCH
-              message: Siti Nurhaliza terdaftar di Cabang Tebet — tidak bisa login di perangkat Cabang Bintaro.
+              message: Siti Nurhaliza terdaftar di Cabang Familia Urban — tidak bisa login di perangkat Cabang Narogong.
               details:
                 clearPin: true
               requestId: req_01J9K3M2Q7XF4T8B

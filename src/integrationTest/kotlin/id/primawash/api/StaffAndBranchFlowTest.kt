@@ -44,7 +44,7 @@ class StaffAndBranchFlowTest {
                 .post(
                     "/staff",
                     """{"name":"Kasir Baru","pin":"1234","role":"KASIR","branchId":"${ApiTestSupport.branchId(
-                        "TBT",
+                        "FMU",
                     )}"}""",
                     api.ownerToken(),
                 ).shouldFailWith(HttpStatusCode.UnprocessableEntity, "PIN_TAKEN")
@@ -86,7 +86,7 @@ class StaffAndBranchFlowTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "5678",
                     ).string("accessToken")
 
@@ -103,7 +103,7 @@ class StaffAndBranchFlowTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "1234",
                     ).string("accessToken")
             val items =
@@ -117,7 +117,7 @@ class StaffAndBranchFlowTest {
                 listOf("Siti Nurhaliza", "Bagas Ardhana", "Raka Prasetyo")
             items.first().jsonObject.keys shouldBe setOf("id", "name", "shortName", "role")
             api
-                .get("/staff?branchId=${ApiTestSupport.branchId("BTR")}", siti)
+                .get("/staff?branchId=${ApiTestSupport.branchId("NRG")}", siti)
                 .shouldFailWith(HttpStatusCode.Forbidden, "BRANCH_SCOPE")
         }
 
@@ -125,19 +125,19 @@ class StaffAndBranchFlowTest {
     fun `should change a branch target with an audit row and refuse an empty one`() =
         apiTest { api ->
             val owner = api.ownerToken()
-            val tebet = ApiTestSupport.branchId("TBT")
+            val familiaUrban = ApiTestSupport.branchId("FMU")
 
             api
-                .patch("/branches/$tebet", """{"dailyTarget":0}""", owner)
+                .patch("/branches/$familiaUrban", """{"dailyTarget":0}""", owner)
                 .shouldFailWith(HttpStatusCode.UnprocessableEntity, "TARGET_REQUIRED")
                 .string("message") shouldBe "Target harian tidak boleh kosong — dikembalikan ke Rp5.200.000."
 
-            val changed = api.patch("/branches/$tebet", """{"dailyTarget":5500000}""", owner).json()
+            val changed = api.patch("/branches/$familiaUrban", """{"dailyTarget":5500000}""", owner).json()
             changed.getValue("changed").jsonPrimitive.content shouldBe "true"
-            val unchanged = api.patch("/branches/$tebet", """{"dailyTarget":5500000}""", owner).json()
+            val unchanged = api.patch("/branches/$familiaUrban", """{"dailyTarget":5500000}""", owner).json()
             unchanged.getValue("changed").jsonPrimitive.content shouldBe "false"
 
-            ApiTestSupport.auditCount("Ubah target harian Cabang Tebet: Rp5.200.000 → Rp5.500.000") shouldBe 1
+            ApiTestSupport.auditCount("Ubah target harian Cabang Familia Urban: Rp5.200.000 → Rp5.500.000") shouldBe 1
         }
 
     @Test
@@ -145,7 +145,7 @@ class StaffAndBranchFlowTest {
         apiTest { api ->
             val owner = api.ownerToken()
             api
-                .patch("/branches/${ApiTestSupport.branchId("TBT")}", """{"active":false}""", owner)
+                .patch("/branches/${ApiTestSupport.branchId("FMU")}", """{"active":false}""", owner)
                 .shouldFailWith(HttpStatusCode.UnprocessableEntity, "BRANCH_IN_USE")
 
             api.patch("/branches/${ApiTestSupport.branchId("CPT")}", """{"active":false}""", owner).status shouldBe

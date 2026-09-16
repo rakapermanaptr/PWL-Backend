@@ -50,8 +50,8 @@ class ApiContractTest {
     @Test
     fun `should match openapi yaml for every documented operation`() =
         apiTest { api ->
-            val tebet = ApiTestSupport.branchId("TBT")
-            val bintaro = ApiTestSupport.branchId("BTR")
+            val familiaUrban = ApiTestSupport.branchId("FMU")
+            val narogong = ApiTestSupport.branchId("NRG")
 
             api.client.get("/health").conformsTo("GET", "/health", HttpStatusCode.OK)
             api.client.get("/health/ready").conformsTo("GET", "/health/ready", HttpStatusCode.OK)
@@ -61,15 +61,15 @@ class ApiContractTest {
             api.get("/login-options").conformsTo("GET", "/api/v1/login-options", HttpStatusCode.OK)
             val ownerLogin =
                 api
-                    .post("/auth/pin-login", """{"branchId":"$tebet","pin":"9090"}""", deviceId = ownerDevice)
+                    .post("/auth/pin-login", """{"branchId":"$familiaUrban","pin":"9090"}""", deviceId = ownerDevice)
                     .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.OK)
                     .json()
             val owner = ownerLogin.string("accessToken")
             api
-                .post("/auth/pin-login", """{"branchId":"$tebet","pin":"12"}""", deviceId = ownerDevice)
+                .post("/auth/pin-login", """{"branchId":"$familiaUrban","pin":"12"}""", deviceId = ownerDevice)
                 .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.UnprocessableEntity)
             api
-                .post("/auth/pin-login", """{"branchId":"$tebet","pin":"9090"}""")
+                .post("/auth/pin-login", """{"branchId":"$familiaUrban","pin":"9090"}""")
                 .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.BadRequest)
             val refreshed =
                 api
@@ -83,10 +83,10 @@ class ApiContractTest {
             api.get("/me", ownerToken).conformsTo("GET", "/api/v1/me", HttpStatusCode.OK)
             api.get("/me").conformsTo("GET", "/api/v1/me", HttpStatusCode.Unauthorized)
 
-            val bintaroDevice = ApiTestSupport.newDevice()
-            api.login(bintaroDevice, "BTR", "2468")
+            val narogongDevice = ApiTestSupport.newDevice()
+            api.login(narogongDevice, "NRG", "2468")
             api
-                .get("/login-options", deviceId = bintaroDevice)
+                .get("/login-options", deviceId = narogongDevice)
                 .conformsTo("GET", "/api/v1/login-options", HttpStatusCode.OK)
             api.get("/devices", ownerToken).conformsTo("GET", "/api/v1/devices", HttpStatusCode.OK)
 
@@ -94,10 +94,10 @@ class ApiContractTest {
             api.get("/branches", owner).conformsTo("GET", "/api/v1/branches", HttpStatusCode.OK)
             api.get("/branches/overview", owner).conformsTo("GET", "/api/v1/branches/overview", HttpStatusCode.OK)
             api
-                .patch("/branches/$tebet", """{"dailyTarget":5500000}""", owner)
+                .patch("/branches/$familiaUrban", """{"dailyTarget":5500000}""", owner)
                 .conformsTo("PATCH", "/api/v1/branches/{id}", HttpStatusCode.OK)
             api
-                .patch("/branches/$tebet", """{"dailyTarget":0}""", owner)
+                .patch("/branches/$familiaUrban", """{"dailyTarget":0}""", owner)
                 .conformsTo("PATCH", "/api/v1/branches/{id}", HttpStatusCode.UnprocessableEntity)
 
             // ---- Staff ----------------------------------------------------------------------
@@ -106,14 +106,14 @@ class ApiContractTest {
                 api
                     .post(
                         "/staff",
-                        """{"name":"Dimas Pratama","pin":"4321","role":"KASIR","branchId":"$bintaro"}""",
+                        """{"name":"Dimas Pratama","pin":"4321","role":"KASIR","branchId":"$narogong"}""",
                         owner,
                     ).conformsTo("POST", "/api/v1/staff", HttpStatusCode.Created)
                     .json()
                     .obj("staff")
                     .string("id")
             api
-                .post("/staff", """{"name":"Dimas Lagi","pin":"4321","role":"KASIR","branchId":"$bintaro"}""", owner)
+                .post("/staff", """{"name":"Dimas Lagi","pin":"4321","role":"KASIR","branchId":"$narogong"}""", owner)
                 .conformsTo("POST", "/api/v1/staff", HttpStatusCode.UnprocessableEntity)
             api
                 .patch("/staff/${ApiTestSupport.staffId("Yuni Astari")}", """{"active":true}""", owner)
@@ -174,11 +174,11 @@ class ApiContractTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "1234",
                     ).string("accessToken")
             api.get("/staff", siti).conformsTo("GET", "/api/v1/staff", HttpStatusCode.OK)
-            api.get("/staff?branchId=$bintaro", siti).conformsTo("GET", "/api/v1/staff", HttpStatusCode.Forbidden)
+            api.get("/staff?branchId=$narogong", siti).conformsTo("GET", "/api/v1/staff", HttpStatusCode.Forbidden)
             api.get("/devices", siti).conformsTo("GET", "/api/v1/devices", HttpStatusCode.Forbidden)
             api
                 .post(
@@ -193,7 +193,7 @@ class ApiContractTest {
                     siti,
                 ).conformsTo("POST", "/api/v1/auth/verify-pin", HttpStatusCode.UnprocessableEntity)
             api
-                .post("/auth/switch-branch", """{"branchId":"$bintaro"}""", siti)
+                .post("/auth/switch-branch", """{"branchId":"$narogong"}""", siti)
                 .conformsTo("POST", "/api/v1/auth/switch-branch", HttpStatusCode.Forbidden)
 
             // ---- Customers ------------------------------------------------------------------
@@ -232,15 +232,15 @@ class ApiContractTest {
                     .json()
                     .string("accessToken")
             api
-                .post("/auth/switch-branch", """{"branchId":"$bintaro"}""", owner)
+                .post("/auth/switch-branch", """{"branchId":"$narogong"}""", owner)
                 .conformsTo("POST", "/api/v1/auth/switch-branch", HttpStatusCode.OK)
             api.post("/auth/logout", token = bagas).conformsTo("POST", "/api/v1/auth/logout", HttpStatusCode.OK)
-            val ownerAgain = api.login(ownerDevice, "TBT", "9090").string("accessToken")
+            val ownerAgain = api.login(ownerDevice, "FMU", "9090").string("accessToken")
             api
-                .delete("/devices/$bintaroDevice", ownerAgain)
+                .delete("/devices/$narogongDevice", ownerAgain)
                 .conformsTo("DELETE", "/api/v1/devices/{id}", HttpStatusCode.OK)
             api
-                .post("/auth/pin-login", """{"branchId":"$bintaro","pin":"2468"}""", deviceId = bintaroDevice)
+                .post("/auth/pin-login", """{"branchId":"$narogong","pin":"2468"}""", deviceId = narogongDevice)
                 .conformsTo("POST", "/api/v1/auth/pin-login", HttpStatusCode.Unauthorized)
             api
                 .post("/auth/refresh", """{"refreshToken":"rt_tidak-ada"}""", deviceId = ownerDevice)
@@ -259,13 +259,13 @@ class ApiContractTest {
         cuciSetrika: String,
         inactiveService: String,
     ) {
-        val tebet = ApiTestSupport.branchId("TBT")
-        val bintaro = ApiTestSupport.branchId("BTR")
+        val familiaUrban = ApiTestSupport.branchId("FMU")
+        val narogong = ApiTestSupport.branchId("NRG")
         val created = inactiveService
         // ---- Shift, orders, offline queue, tablet cache (M2) ----------------------------------------
         api.get("/shifts/current", siti).conformsTo("GET", "/api/v1/shifts/current", HttpStatusCode.OK)
         api
-            .get("/shifts/current?branchId=$bintaro", siti)
+            .get("/shifts/current?branchId=$narogong", siti)
             .conformsTo("GET", "/api/v1/shifts/current", HttpStatusCode.Forbidden)
         val walkIn = Tx.orderBody(Tx.key(), listOf(Line(cuciSetrika, "2", 11_000)), 22_000)
         api
@@ -323,7 +323,12 @@ class ApiContractTest {
         api
             .post(
                 "/orders",
-                Tx.orderBody(Tx.key(), listOf(Line(cuciSetrika, "1", 11_000)), 11_000, customerId = tebet.toString()),
+                Tx.orderBody(
+                    Tx.key(),
+                    listOf(Line(cuciSetrika, "1", 11_000)),
+                    11_000,
+                    customerId = familiaUrban.toString(),
+                ),
                 siti,
                 idempotencyKey = Tx.key(),
             ).conformsTo("POST", "/api/v1/orders", HttpStatusCode.NotFound)
@@ -421,7 +426,7 @@ class ApiContractTest {
         // ---- Owner report page (M3) -------------------------------------------------------
         api.get("/reports/dashboard", owner).conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.OK)
         api
-            .get("/reports/dashboard?branchId=$tebet&periodDays=7&auditRangeDays=7", owner)
+            .get("/reports/dashboard?branchId=$familiaUrban&periodDays=7&auditRangeDays=7", owner)
             .conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.OK)
         api.get("/reports/dashboard", siti).conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.Forbidden)
         api

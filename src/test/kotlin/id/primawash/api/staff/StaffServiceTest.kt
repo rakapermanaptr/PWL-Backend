@@ -8,8 +8,8 @@ import id.primawash.api.common.BusinessRuleException
 import id.primawash.api.common.ConflictException
 import id.primawash.api.common.SecureTokens
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.OWNER_ACTOR
-import id.primawash.api.support.TEBET
 import id.primawash.api.support.recordingAudit
 import id.primawash.api.support.staffRecord
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -35,7 +35,7 @@ class StaffServiceTest {
         StaffService(DirectTransactionRunner, repository, branches, sessions, audit.first, hasher, tokens)
 
     init {
-        every { branches.find(TEBET.id) } returns TEBET
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN
         every { repository.existsActiveWithPinLookup(any(), any()) } returns false
     }
 
@@ -70,7 +70,7 @@ class StaffServiceTest {
             } answers {}
             every { repository.findById(any(), any()) } answers { staffRecord("Dewi Owner", Role.OWNER) }
 
-            service.create("Dewi Owner", "246810", Role.OWNER, TEBET.id, OWNER_ACTOR)
+            service.create("Dewi Owner", "246810", Role.OWNER, FAMILIA_URBAN.id, OWNER_ACTOR)
 
             branch.captured shouldBe null
             lookup.captured shouldBe hasher.lookup("246810")

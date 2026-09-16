@@ -30,7 +30,7 @@ class OfflineSyncFlowTest {
     @Test
     fun `should process each transaction on its own and answer a resent one as duplicate`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val shift = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             val first =
                 Tx.offline(
@@ -61,7 +61,7 @@ class OfflineSyncFlowTest {
             rejected.obj("error").string("code") shouldBe "INVALID_ITEM"
             rejected.obj("error").string("message") shouldBe "Layanan yang dipilih sudah tidak tersedia."
             body.results()[0].obj("order").let {
-                it.string("number") shouldBe "TBT-0915-001"
+                it.string("number") shouldBe "FMU-0915-001"
                 it.string("source") shouldBe "OFFLINE_SYNC"
                 it.string("capturedAt") shouldBe "2026-09-15T01:00:00.000Z"
                 it.string("shiftId") shouldBe shift
@@ -75,14 +75,14 @@ class OfflineSyncFlowTest {
             }
             scalar("SELECT cash_sales || '/' || transfer_sales || '/' || tx_count FROM shifts") shouldBe "30000/15000/2"
             ApiTestSupport.auditCount(
-                "Sync 2 transaksi offline Cabang Tebet · Rp45.000 · ID TBT-0915-001–TBT-0915-002",
+                "Sync 2 transaksi offline Cabang Familia Urban · Rp45.000 · ID FMU-0915-001–FMU-0915-002",
             ) shouldBe 1
-            ApiTestSupport.auditCount("Transaksi TBT-0915-001 · Rp30.000 · Tunai · offline") shouldBe 1
+            ApiTestSupport.auditCount("Transaksi FMU-0915-001 · Rp30.000 · Tunai · offline") shouldBe 1
 
             // The tablet keeps the rejected one queued and sends it again with the first one.
             val again = api.sync(siti, Tx.syncBody(first, unknown)).json()
             again.results().map { it.string("status") } shouldContainExactly listOf("DUPLICATE", "REJECTED")
-            again.results()[0].obj("order").string("number") shouldBe "TBT-0915-001"
+            again.results()[0].obj("order").string("number") shouldBe "FMU-0915-001"
             again.obj("summary").long("duplicates") shouldBe 1
             ApiTestSupport.count("SELECT count(*) FROM orders") shouldBe 2
             ApiTestSupport.count("SELECT count(*) FROM audit_log WHERE action LIKE 'Sync %'") shouldBe 1
@@ -91,7 +91,7 @@ class OfflineSyncFlowTest {
     @Test
     fun `should earn points at the rate in force when the transaction was captured`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val shift = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = false)
 
@@ -103,7 +103,7 @@ class OfflineSyncFlowTest {
 
             // 13.00 WIB: the queue from 11.00 WIB arrives.
             clock.now = java.time.Instant.parse("2026-09-15T06:00:00Z")
-            val tablet = api.till("TBT", "1234")
+            val tablet = api.till("FMU", "1234")
             val offline =
                 Tx.offline(
                     capturedAt = "2026-09-15T04:00:00.000Z",
@@ -135,7 +135,7 @@ class OfflineSyncFlowTest {
     @Test
     fun `should record a transaction that arrives after its shift was closed`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val shift = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             val late =
                 Tx.offline(
@@ -191,7 +191,7 @@ class OfflineSyncFlowTest {
     @Test
     fun `should accept odd transactions with flags and reject only what cannot be recorded`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val shift = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = false)
             Tx.givePoints(dewi, 5_000)
@@ -287,19 +287,19 @@ class OfflineSyncFlowTest {
                 it.string("staffId") shouldBe bagas
                 it.string("shiftId") shouldBe shift
             }
-            // Nia works at Bintaro: the sale is attributed to the cashier who synced it.
+            // Nia works at Narogong: the sale is attributed to the cashier who synced it.
             results[1].obj("order").let {
                 it.flags() shouldContainExactly listOf("SERVICE_INACTIVE")
                 it.string("staffId") shouldBe ApiTestSupport.staffId("Siti Nurhaliza").toString()
             }
             results[2].obj("order").let {
                 it.flags() shouldContainExactly listOf("STALE_CAPTURE")
-                it.string("number") shouldBe "TBT-0907-001"
+                it.string("number") shouldBe "FMU-0907-001"
                 it.string("businessDate") shouldBe "2026-09-07"
             }
-            results[3].obj("order").string("number") shouldBe "TBT-0914-001"
+            results[3].obj("order").string("number") shouldBe "FMU-0914-001"
             // 00.00 WIB is already the 15th: third number of that day, after the two above.
-            results[4].obj("order").string("number") shouldBe "TBT-0915-003"
+            results[4].obj("order").string("number") shouldBe "FMU-0915-003"
             results[5].obj("error").let {
                 it.string("code") shouldBe "REDEEM_OFFLINE"
                 it.string("message") shouldBe "Redeem poin butuh koneksi — batalkan redemption atau tunggu online."
@@ -313,7 +313,7 @@ class OfflineSyncFlowTest {
             scalar("SELECT revenue FROM daily_sales WHERE business_date = '2026-09-15'") shouldBe "46000"
             scalar("SELECT points_balance FROM customers WHERE id = '$dewi'") shouldBe "5000"
             ApiTestSupport.auditCount(
-                "Transaksi TBT-0915-001 · Rp18.000 · Tunai · offline · ditandai: harga beda dengan price list",
+                "Transaksi FMU-0915-001 · Rp18.000 · Tunai · offline · ditandai: harga beda dengan price list",
             ) shouldBe 1
             auditActions("Transaksi ").filter { it.contains("ditandai") }.size shouldBe 3
         }
@@ -321,7 +321,7 @@ class OfflineSyncFlowTest {
     @Test
     fun `should use the price list of the capture time, not today's`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val captured =
                 Tx.offline(
@@ -347,7 +347,7 @@ class OfflineSyncFlowTest {
     @Test
     fun `should upsert customers registered offline by phone and map the tablet id`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = false)
             val rinaId = UUID.randomUUID().toString()
@@ -405,7 +405,7 @@ class OfflineSyncFlowTest {
     @Test
     fun `should replay a retried batch and refuse what has nowhere to go`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val batch =
                 Tx.syncBody(
@@ -417,8 +417,8 @@ class OfflineSyncFlowTest {
             api.sync(siti, batch, key).json() shouldBe first
             ApiTestSupport.count("SELECT count(*) FROM orders") shouldBe 1
 
-            // Bintaro never opened a shift: a paid transaction there has no drawer to land in.
-            val nia = api.till("BTR", "2468")
+            // Narogong never opened a shift: a paid transaction there has no drawer to land in.
+            val nia = api.till("NRG", "2468")
             val orphan =
                 Tx.offline(
                     capturedAt = "2026-09-15T01:00:00.000Z",

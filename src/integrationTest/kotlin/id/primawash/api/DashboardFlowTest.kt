@@ -34,11 +34,11 @@ class DashboardFlowTest {
     @Test
     fun `should report today's sales, the branch rows and the chart from the orders just taken`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "4.5", 10_000))
             api.walkIn(siti, Line(Tx.serviceId("Cuci Kering"), "3", 7_000), payment = "TRANSFER")
-            val owner = api.till("TBT", "9090")
+            val owner = api.till("FMU", "9090")
 
             val dashboard = api.dashboard(owner)
 
@@ -49,11 +49,11 @@ class DashboardFlowTest {
             dashboard.long("revenueYesterday") shouldBe 0
 
             val rows = dashboard.array("branchRows").objects()
-            rows.map { it.string("code") } shouldContain "TBT"
-            val tebet = rows.first { it.string("code") == "TBT" }
-            tebet.long("revenue") shouldBe 66_000
-            tebet.long("txCount") shouldBe 2
-            tebet.obj("latestShift").string("openedByName") shouldBe "Siti Nurhaliza"
+            rows.map { it.string("code") } shouldContain "FMU"
+            val familiaUrban = rows.first { it.string("code") == "FMU" }
+            familiaUrban.long("revenue") shouldBe 66_000
+            familiaUrban.long("txCount") shouldBe 2
+            familiaUrban.obj("latestShift").string("openedByName") shouldBe "Siti Nurhaliza"
 
             val chart = dashboard.array("chart").objects()
             chart.size shouldBe 7
@@ -66,7 +66,7 @@ class DashboardFlowTest {
     @Test
     fun `should default the period to the last 30 days and never report over all time`() =
         apiTest(clock) { api ->
-            val owner = api.till("TBT", "9090")
+            val owner = api.till("FMU", "9090")
 
             val dashboard = api.dashboard(owner)
 
@@ -79,7 +79,7 @@ class DashboardFlowTest {
     @Test
     fun `should count an order synced today but captured yesterday as yesterday's revenue`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val response =
                 api.sync(
@@ -98,7 +98,7 @@ class DashboardFlowTest {
                 .objects()
                 .single()
                 .string("status") shouldBe "CREATED"
-            val owner = api.till("TBT", "9090")
+            val owner = api.till("FMU", "9090")
 
             val dashboard = api.dashboard(owner)
 
@@ -114,7 +114,7 @@ class DashboardFlowTest {
     @Test
     fun `should count orders waiting to be collected and leave the delivery rate unknown until M5`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Lestari", "0812-3390-4471", optIn = true)
             val order =
@@ -132,7 +132,7 @@ class DashboardFlowTest {
                     .string("id")
             api.advance(siti, order, "DITERIMA").status shouldBe HttpStatusCode.OK
             api.advance(siti, order, "PROSES").status shouldBe HttpStatusCode.OK
-            val owner = api.till("TBT", "9090")
+            val owner = api.till("FMU", "9090")
 
             val dashboard = api.dashboard(owner)
 
@@ -146,11 +146,11 @@ class DashboardFlowTest {
     @Test
     fun `should share out the period's revenue per service`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "10.5", 10_000))
             api.walkIn(siti, Line(Tx.serviceId("Cuci Kering"), "5", 7_000))
-            val owner = api.till("TBT", "9090")
+            val owner = api.till("FMU", "9090")
 
             val services = api.dashboard(owner).array("topServices").objects()
 
@@ -162,25 +162,25 @@ class DashboardFlowTest {
     @Test
     fun `should scope every figure to the branch the owner picks`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "4", 10_000))
-            val owner = api.till("TBT", "9090")
-            val bintaro = ApiTestSupport.branchId("BTR")
+            val owner = api.till("FMU", "9090")
+            val narogong = ApiTestSupport.branchId("NRG")
 
-            val scoped = api.dashboard(owner, "?branchId=$bintaro")
+            val scoped = api.dashboard(owner, "?branchId=$narogong")
 
-            scoped.string("branchId") shouldBe bintaro.toString()
+            scoped.string("branchId") shouldBe narogong.toString()
             scoped.long("revenueToday") shouldBe 0
-            scoped.array("branchRows").objects().map { it.string("code") } shouldBe listOf("BTR")
+            scoped.array("branchRows").objects().map { it.string("code") } shouldBe listOf("NRG")
             scoped.array("chart").objects().all { it.array("branches").objects().size == 1 } shouldBe true
         }
 
     @Test
     fun `should show the audit trail of the window, newest first`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val owner = api.till("TBT", "9090")
+            val siti = api.till("FMU", "1234")
+            val owner = api.till("FMU", "9090")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "1", 10_000))
 
@@ -196,8 +196,8 @@ class DashboardFlowTest {
     @Test
     fun `should refuse a cashier and an unknown branch`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val owner = api.till("TBT", "9090")
+            val siti = api.till("FMU", "1234")
+            val owner = api.till("FMU", "9090")
 
             api.get("/reports/dashboard", siti.token).status shouldBe HttpStatusCode.Forbidden
             api

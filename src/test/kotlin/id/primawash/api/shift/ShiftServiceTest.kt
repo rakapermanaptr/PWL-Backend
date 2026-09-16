@@ -7,11 +7,11 @@ import id.primawash.api.common.AuditActionType
 import id.primawash.api.common.DomainException
 import id.primawash.api.common.Idempotent
 import id.primawash.api.common.StoredResponse
-import id.primawash.api.support.BINTARO
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.FIXED_CLOCK
+import id.primawash.api.support.NAROGONG
 import id.primawash.api.support.NOW
-import id.primawash.api.support.TEBET
 import id.primawash.api.support.TxFixtures
 import id.primawash.api.support.principal
 import id.primawash.api.support.recordingAudit
@@ -48,9 +48,9 @@ class ShiftServiceTest {
     private val stored: (Any?) -> StoredResponse = { StoredResponse(200, JsonNull) }
 
     init {
-        every { branches.find(TEBET.id) } returns TEBET
-        every { branches.find(BINTARO.id) } returns BINTARO
-        every { repository.findOpen(TEBET.id, any()) } returns null
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN
+        every { branches.find(NAROGONG.id) } returns NAROGONG
+        every { repository.findOpen(FAMILIA_URBAN.id, any()) } returns null
         every { repository.nonSaleTotals(any()) } returns emptyMap()
         every { repository.insertEntry(any(), any(), any(), any(), any(), any(), any(), any(), any()) } returns
             UUID.randomUUID()
@@ -71,17 +71,17 @@ class ShiftServiceTest {
 
     @Test
     fun `should check branch, open shift, opening cash and proof in that order`() {
-        every { branches.find(TEBET.id) } returns TEBET.copy(active = false)
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN.copy(active = false)
         assertThrows<DomainException> { open(null, null) }.let {
             it.code shouldBe "BRANCH_INACTIVE"
             it.message shouldBe
-                "Cabang Tebet nonaktif — shift baru tidak bisa dibuka sampai owner mengaktifkan cabang."
+                "Cabang Familia Urban nonaktif — shift baru tidak bisa dibuka sampai owner mengaktifkan cabang."
         }
-        every { branches.find(TEBET.id) } returns TEBET
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN
 
-        every { repository.findOpen(TEBET.id, any()) } returns TxFixtures.shift()
+        every { repository.findOpen(FAMILIA_URBAN.id, any()) } returns TxFixtures.shift()
         assertThrows<DomainException> { open(null, null) }.code shouldBe "SHIFT_ALREADY_OPEN"
-        every { repository.findOpen(TEBET.id, any()) } returns null
+        every { repository.findOpen(FAMILIA_URBAN.id, any()) } returns null
 
         assertThrows<DomainException> { open(0, null) }.let {
             it.code shouldBe "OPENING_CASH_REQUIRED"
@@ -100,11 +100,11 @@ class ShiftServiceTest {
         val opened = open(500_000, "sp_ok")
 
         opened.session shouldBe null
-        verify { repository.insert(any(), TEBET.id, sitiStaff.id, "Siti Nurhaliza", 500_000, NOW) }
+        verify { repository.insert(any(), FAMILIA_URBAN.id, sitiStaff.id, "Siti Nurhaliza", 500_000, NOW) }
         verify {
             repository.insertEntry(
                 any(),
-                TEBET.id,
+                FAMILIA_URBAN.id,
                 CashEntryKind.OPENING,
                 "Modal awal shift",
                 "Diinput Siti Nurhaliza",
@@ -114,7 +114,7 @@ class ShiftServiceTest {
                 NOW,
             )
         }
-        audit.second.single().action shouldBe "Buka shift Cabang Tebet · modal awal Rp500.000"
+        audit.second.single().action shouldBe "Buka shift Cabang Familia Urban · modal awal Rp500.000"
         verify(exactly = 0) { auth.handOverDevice(any(), any()) }
     }
 
@@ -149,11 +149,18 @@ class ShiftServiceTest {
     fun `should validate a cash entry in the documented order`() {
         val open = TxFixtures.shift()
 
-        assertThrows<DomainException> { cashEntry(TxFixtures.shift(branchId = BINTARO.id), false, "", 0) }.code shouldBe
+        assertThrows<DomainException> {
+            cashEntry(
+                TxFixtures.shift(branchId = NAROGONG.id),
+                false,
+                "",
+                0,
+            )
+        }.code shouldBe
             "BRANCH_SCOPE"
         assertThrows<DomainException> { cashEntry(TxFixtures.shift(closedAt = NOW), false, "", 0) }.let {
             it.code shouldBe "SHIFT_NOT_OPEN"
-            it.message shouldBe "Shift Cabang Tebet belum dibuka."
+            it.message shouldBe "Shift Cabang Familia Urban belum dibuka."
         }
         assertThrows<DomainException> { cashEntry(open, false, "  ", 0) }.let {
             it.code shouldBe "CASH_LABEL_REQUIRED"
@@ -177,7 +184,7 @@ class ShiftServiceTest {
                 CashEntryRecord(
                     id,
                     shift.id,
-                    TEBET.id,
+                    FAMILIA_URBAN.id,
                     CashEntryKind.CASH_OUT,
                     "",
                     "",
@@ -196,7 +203,7 @@ class ShiftServiceTest {
         verify {
             repository.insertEntry(
                 shift.id,
-                TEBET.id,
+                FAMILIA_URBAN.id,
                 CashEntryKind.CASH_OUT,
                 "Kas keluar — beli deterjen",
                 "Diinput Siti Nurhaliza",
@@ -233,7 +240,7 @@ class ShiftServiceTest {
         closed.expected shouldBe 1_624_000
         closed.diff shouldBe 0
         verify { repository.close(shift.id, 1_624_000, 1_624_000, siti.staffId, NOW) }
-        audit.second.single().action shouldBe "Tutup shift Cabang Tebet · kas cocok"
+        audit.second.single().action shouldBe "Tutup shift Cabang Familia Urban · kas cocok"
     }
 
     @Test
@@ -242,11 +249,11 @@ class ShiftServiceTest {
         every { repository.nonSaleTotals(listOf(shift.id)) } returns mapOf(shift.id to 500_000L)
 
         close(shift, 492_000).diff shouldBe -8_000
-        audit.second.single().action shouldBe "Tutup shift Cabang Tebet · selisih Rp8.000"
+        audit.second.single().action shouldBe "Tutup shift Cabang Familia Urban · selisih Rp8.000"
 
         assertThrows<DomainException> { close(TxFixtures.shift(closedAt = NOW), 0) }.let {
             it.code shouldBe "SHIFT_CLOSED"
-            it.message shouldBe "Shift Cabang Tebet sudah ditutup."
+            it.message shouldBe "Shift Cabang Familia Urban sudah ditutup."
         }
     }
 
@@ -257,7 +264,7 @@ class ShiftServiceTest {
         fun sale(
             cash: Boolean,
             total: Long,
-        ) = ShiftSale(UUID.randomUUID(), "TBT-0915-001", cash, total, 300, "Dewi Anggraini", siti.staffId)
+        ) = ShiftSale(UUID.randomUUID(), "FMU-0915-001", cash, total, 300, "Dewi Anggraini", siti.staffId)
 
         service.recordSale(shift, sale(cash = true, total = 31_000))
         service.recordSale(shift, sale(cash = false, total = 45_000))
@@ -268,9 +275,9 @@ class ShiftServiceTest {
         verify(exactly = 1) {
             repository.insertEntry(
                 shift.id,
-                TEBET.id,
+                FAMILIA_URBAN.id,
                 CashEntryKind.SALE,
-                "Pembayaran tunai TBT-0915-001",
+                "Pembayaran tunai FMU-0915-001",
                 "Dewi Anggraini",
                 31_000,
                 any(),

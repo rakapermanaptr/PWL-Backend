@@ -65,18 +65,18 @@ private data class SeedStaff(
 private val BRANCHES =
     listOf(
         SeedBranch(
-            "TBT",
-            "Tebet",
-            "Jl. Tebet Raya No. 42, Jakarta Selatan",
+            "FMU",
+            "Familia Urban",
+            "Ruko Arundaya, Jl. Familia Urban Blok DD. 21",
             "021-8290-1147",
             "07.00 – 21.00",
             5_200_000,
             1,
         ),
         SeedBranch(
-            "BTR",
-            "Bintaro",
-            "Jl. Bintaro Utama Sektor 3A No. 9, Tangsel",
+            "NRG",
+            "Narogong",
+            "Jl. Narogong Indah No.12 Blok C 8, RT.005/RW.012",
             "021-7345-6620",
             "07.00 – 21.00",
             3_400_000,
@@ -85,7 +85,7 @@ private val BRANCHES =
         SeedBranch(
             "CPT",
             "Cipete",
-            "Jl. Cipete Raya No. 18B, Jakarta Selatan",
+            "Jl. Cipete Raya No.18-19, RT.8/RW.4",
             "021-7690-4432",
             "08.00 – 20.00",
             2_300_000,
@@ -123,10 +123,10 @@ private val REWARDS =
 
 private val STAFF =
     listOf(
-        SeedStaff("Siti Nurhaliza", "Siti N.", "KASIR", "TBT", "1234", true, 1),
-        SeedStaff("Bagas Ardhana", "Bagas A.", "KASIR", "TBT", "5678", true, 2),
-        SeedStaff("Nia Ramadhani", "Nia R.", "KASIR", "BTR", "2468", true, 3),
-        SeedStaff("Fajar Nugroho", "Fajar N.", "KASIR", "BTR", "1357", true, 4),
+        SeedStaff("Siti Nurhaliza", "Siti N.", "KASIR", "FMU", "1234", true, 1),
+        SeedStaff("Bagas Ardhana", "Bagas A.", "KASIR", "FMU", "5678", true, 2),
+        SeedStaff("Nia Ramadhani", "Nia R.", "KASIR", "NRG", "2468", true, 3),
+        SeedStaff("Fajar Nugroho", "Fajar N.", "KASIR", "NRG", "1357", true, 4),
         SeedStaff("Wulan Sari", "Wulan S.", "KASIR", "CPT", "3690", true, 5),
         SeedStaff("Yuni Astari", "Yuni A.", "KASIR", "CPT", "4321", false, 6),
         SeedStaff("Raka Prasetyo", "Raka", "OWNER", null, "9090", true, 7),

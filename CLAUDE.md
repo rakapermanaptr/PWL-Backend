@@ -208,7 +208,7 @@ touching a related area, check the PRD section named here.
 | T1 | PIN hashed SHA-256 with a static salt | HMAC lookup + Argon2id + rate limit (§12.2) |
 | T2 | Reactivating a staff account can duplicate an active PIN | `409 PIN_CONFLICT`; partial unique index (§8.3) |
 | T3 | `matchesActivePin` as an API is a guessing oracle | Endpoint not provided (§8.1) |
-| T4 | Order id `TBT-0829-015` has no year → collides next year | UUID `id` + display `number` unique per (branch, business date) (§7.3) |
+| T4 | Order id `FMU-0829-015` has no year → collides next year | UUID `id` + display `number` unique per (branch, business date) (§7.3) |
 | T5 | Sync requires an open shift, uses today's rate, stops at first failure | Shift and rate follow `capturedAt`; per-transaction results (§11) |
 | T6 | WA marked `TERKIRIM` immediately, without sending | Outbox + worker + Meta webhook (§10). While the worker is unbuilt, `QUEUED` is the correct terminal state — never fake `SENT` |
 | T7 | "Ready" notification keyed on the order's stamped `waStatus` | Check the customer's opt-in **at the moment the event happens** (§8.6) |

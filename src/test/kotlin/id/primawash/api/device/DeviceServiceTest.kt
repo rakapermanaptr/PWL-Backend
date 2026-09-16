@@ -2,10 +2,10 @@ package id.primawash.api.device
 
 import id.primawash.api.auth.SessionService
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.FIXED_CLOCK
 import id.primawash.api.support.NOW
 import id.primawash.api.support.OWNER_ACTOR
-import id.primawash.api.support.TEBET
 import id.primawash.api.support.deviceRecord
 import id.primawash.api.support.recordingAudit
 import io.kotest.matchers.collections.shouldBeEmpty
@@ -37,12 +37,12 @@ class DeviceServiceTest {
     @Test
     fun `should name a tablet after its branch on first login and keep a name already given`() {
         val fresh = deviceRecord(name = "Tablet", lastBranchId = null)
-        service.recordLogin(fresh, TEBET.id, "Tebet", "1.4.0")
-        verify { repository.recordLogin(fresh.id, TEBET.id, "Tablet Cabang Tebet", "1.4.0", NOW) }
+        service.recordLogin(fresh, FAMILIA_URBAN.id, "Familia Urban", "1.4.0")
+        verify { repository.recordLogin(fresh.id, FAMILIA_URBAN.id, "Tablet Cabang Familia Urban", "1.4.0", NOW) }
 
         val named = deviceRecord(name = "Tablet Kasir Depan")
-        service.recordLogin(named, TEBET.id, "Tebet", null)
-        verify { repository.recordLogin(named.id, TEBET.id, "Tablet Kasir Depan", null, NOW) }
+        service.recordLogin(named, FAMILIA_URBAN.id, "Familia Urban", null)
+        verify { repository.recordLogin(named.id, FAMILIA_URBAN.id, "Tablet Kasir Depan", null, NOW) }
     }
 
     @Test
@@ -54,7 +54,7 @@ class DeviceServiceTest {
 
             service.revoke(tablet.id, OWNER_ACTOR).changed shouldBe true
             verify { repository.revoke(tablet.id, NOW) }
-            audit.second.single().action shouldBe "Blokir perangkat Tablet Cabang Tebet"
+            audit.second.single().action shouldBe "Blokir perangkat Tablet Cabang Familia Urban"
 
             every { repository.findById(tablet.id, true) } returns tablet.copy(revokedAt = NOW)
             audit.second.clear()
