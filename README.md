@@ -15,9 +15,9 @@ offline**.
 
 ## Status
 
-**M2 selesai di `development` — transaksi.** M1 (identitas & master data: login "pilih cabang → ketik
-PIN" tanpa aktivasi perangkat, sesi, cabang, staff, price list, loyalty, reward, customer, audit) sudah
-di `main` dan staging <https://pwl-cashier-staging-rvz75.ondigitalocean.app>. M2 menambah: order online
+**M2 selesai — transaksi sudah di `main` dan staging.** M1 (identitas & master data: login "pilih cabang → ketik
+PIN" tanpa aktivasi perangkat, sesi, cabang, staff, price list, loyalty, reward, customer, audit) dan M2
+kini sama-sama berjalan di staging <https://pwl-cashier-staging-rvz75.ondigitalocean.app>. M2 menambah: order online
 yang dihitung ulang server (nomor order per tanggal bisnis, event layer, ledger poin, total shift, kas,
 `daily_sales`, audit, dan baris outbox WhatsApp `QUEUED` dalam satu transaksi), advance status dengan
 `fromStatus`, sinkronisasi antrean offline per transaksi (rate/tanggal/nomor dari `capturedAt`, flag bukan
@@ -25,7 +25,8 @@ penolakan), shift & kas dengan rekap, `Idempotency-Key`, cache tablet (`/sync/bo
 `/sync/changes` dengan watermark id transaksi), dan heartbeat. Skenario PRD §16 #1–#11 lolos (untuk #8 sampai pesan `QUEUED` — pengirimannya M5), termasuk
 uji konkurensi paralel. `openapi.yaml` menspesifikasikan semua endpoint M1–M2 dan setiap respons
 divalidasi terhadapnya. Keputusan yang terisi saat implementasi sudah diterapkan ke PRD Draft 1.2 (riwayat:
-[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md)). Yang belum: laporan & impor (M3) dan seterusnya.
+[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md)). Berikutnya:
+laporan & impor (M3).
 
 | Sudah jalan di M0 | Perintah |
 |---|---|
@@ -41,8 +42,8 @@ divalidasi terhadapnya. Keputusan yang terisi saat implementasi sudah diterapkan
 |---|---|---|
 | M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | ✅ staging aktif, skema V2 di `main` |
 | M1 Identitas & master data | Login PIN tanpa aktivasi, cabang, staff, price list, loyalty, reward, customer, audit | ✅ di `main` & staging |
-| M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | 🔨 selesai di `development`, belum di staging |
-| M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | ⬜ |
+| M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | ✅ di `main` & staging |
+| M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | 🔨 berikutnya |
 | M4 Shadow mode | Dry-run 3–5 hari paralel dengan SaaS lama + UAT (belum mengirim WA) | ⬜ |
 | M5 Integrasi Meta/WhatsApp | Worker, Cloud API client, retry, webhook, opt-out STOP, failures API, summary | ⬜ |
 | M6 Go-live | Cutover cabang pilot, monitoring intensif 2 minggu | ⬜ |
