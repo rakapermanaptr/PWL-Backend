@@ -79,8 +79,9 @@ class ReportService(
      * `GET /reports/dashboard` (PRD §8.9). [branchId] null means every branch; the route has already
      * resolved a cashier's scope, and an owner naming a branch that does not exist gets a 404.
      *
-     * One transaction, one consistent picture: all the counters are read together, so the chart
-     * cannot disagree with the branch rows because an order landed between two queries.
+     * One read-only `REPEATABLE READ` snapshot, one consistent picture: every query sees the database
+     * as of the first one, so the chart cannot disagree with the branch rows because an order landed
+     * between two queries.
      */
     suspend fun dashboard(
         branchId: UUID?,
@@ -88,7 +89,7 @@ class ReportService(
         periodDays: Int,
         auditRangeDays: Int,
     ): Dashboard =
-        tx {
+        tx.snapshot {
             val on = date ?: WibClock.businessDate(clock.instant())
             val scope = resolveScope(branchId)
             val period = DashboardPeriod(periodDays, on.minusDays((periodDays - 1).toLong()), on)

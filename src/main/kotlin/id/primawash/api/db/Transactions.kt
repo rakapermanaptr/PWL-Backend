@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.postgresql.util.PSQLException
+import java.sql.Connection
 
 /**
  * The transaction boundary of a `Service` (CLAUDE.md Invariant 2: one action = one database
@@ -15,6 +16,12 @@ import org.postgresql.util.PSQLException
  */
 interface TransactionRunner {
     suspend operator fun <T> invoke(block: () -> T): T
+
+    /**
+     * A read-only transaction whose queries all see the database as of its first query
+     * (`REPEATABLE READ`), for reports built from many queries that must agree with each other.
+     */
+    suspend fun <T> snapshot(block: () -> T): T = invoke(block)
 }
 
 class ExposedTransactionRunner(
@@ -22,6 +29,11 @@ class ExposedTransactionRunner(
 ) : TransactionRunner {
     override suspend fun <T> invoke(block: () -> T): T =
         withContext(Dispatchers.IO) { transaction(database) { block() } }
+
+    override suspend fun <T> snapshot(block: () -> T): T =
+        withContext(Dispatchers.IO) {
+            transaction(database, Connection.TRANSACTION_REPEATABLE_READ, readOnly = true) { block() }
+        }
 }
 
 private const val UNIQUE_VIOLATION = "23505"
