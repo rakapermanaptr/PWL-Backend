@@ -516,6 +516,57 @@ keluar negatif); entri `SALE` dibuat server untuk setiap order tunai.
 - **Heartbeat** tiap 60 detik dengan jumlah transaksi di antrean offline (`pendingCount`, wajib). Bila
   `serverTime` beda jauh dari jam tablet, peringatkan kasir sebelum mencatat transaksi offline.
 
+### 8.10 Laporan owner — `GET /api/v1/reports/dashboard`
+
+Owner saja (kasir → `403 FORBIDDEN`). Satu panggilan mengisi seluruh halaman Laporan; semuanya dibaca
+dalam satu transaksi sehingga chart, baris cabang, dan ringkasan tidak pernah saling bertentangan.
+
+| Query | Default | Arti |
+|---|---|---|
+| `branchId` | semua cabang | Cabang yang dilaporkan. Cabang tidak dikenal → `404`. |
+| `date` | hari ini (WIB) | Tanggal bisnis yang dilaporkan. |
+| `periodDays` | `30` | Panjang rentang yang berakhir di `date`, dipakai rasio & `topServices`. 1–365. |
+| `auditRangeDays` | `1` | Jendela log audit: `1`, `7`, atau `30`. |
+
+```jsonc
+{
+  "date": "2026-09-15", "branchId": null,
+  "periodDays": 30, "periodFrom": "2026-08-17", "periodTo": "2026-09-15", "auditRangeDays": 1,
+  "revenueToday": 4820000, "txToday": 37, "revenueYesterday": 4310000,
+  "readyForPickup": 12, "staleReady": 2,
+  "optInRate": 0.82, "deliveryRate": null, "redemptionRate": 0.11, "pendingSync": 3,
+  "branchRows": [
+    { "branchId": "…", "code": "TBT", "name": "Tebet", "active": true,
+      "revenue": 2600000, "txCount": 21, "readyForPickup": 8,
+      "dailyTarget": 5200000, "targetRatio": 0.5,
+      "latestShift": { "id": "…", "open": true, "openedByName": "Siti Nurhaliza",
+                       "openedAt": "2026-09-15T00:02:11.000Z", "closedAt": null } }
+  ],
+  "chart": [ { "date": "2026-09-09", "total": 3900000,
+               "branches": [ { "branchId": "…", "revenue": 2100000 } ] } ],
+  "topServices": [ { "name": "Cuci Setrika", "revenue": 105000, "share": 0.75 } ],
+  "audit": [ { "id": 918, "branchId": "…", "staffId": "…", "actorName": "Siti N. (kasir)",
+               "actionType": "ORDER_CREATED", "action": "Buat order TBT-0915-001 — Rp45.000",
+               "entityType": "order", "entityId": "…", "createdAt": "2026-09-15T02:10:04.000Z" } ],
+  "auditTruncated": false
+}
+```
+
+- **Periode selalu eksplisit.** Tidak ada opsi "sepanjang masa" — klien lama menghitung metrik atas
+  seluruh riwayat sehingga perubahan minggu ini tenggelam. Tampilkan `periodFrom`–`periodTo` di UI.
+- **Rasio bisa `null`** artinya belum ada yang bisa diukur (penyebutnya 0) — tampilkan "belum ada data",
+  **jangan** 0%. `deliveryRate` tetap `null` sampai M5: sebelum worker jalan pesan hanya `QUEUED` dan
+  belum pernah punya kesempatan terkirim.
+- `targetRatio` boleh > 1 (112% target = `1.12`); `null` bila target cabang belum diisi.
+- `chart` selalu 7 hari berurutan (terlama dulu) dan tiap hari memuat semua cabang dalam scope, termasuk
+  yang nol — gambar langsung tanpa mengisi celah sendiri.
+- `topServices` = 4 layanan terbesar + `"Lainnya"`; `share` adalah pangsa 0–1 dari omzet item periode.
+  Kosong bila belum ada penjualan.
+- `audit` memuat paling banyak 100 entri terbaru; `auditTruncated: true` berarti masih ada sisanya —
+  arahkan ke layar log audit penuh (`GET /audit`, menyusul di M3).
+- Omzet diakui pada tanggal bisnis `capturedAt`: transaksi offline yang tersinkron besok tetap masuk ke
+  hari transaksinya, jadi angka kemarin bisa bertambah setelah tablet online.
+
 ## 9. Batas & kunci
 
 | Batas | Nilai | Respons |
@@ -611,7 +662,7 @@ yang sama dengan saat ini aman: respons `changed: false`, tanpa audit.
 
 | Milestone | Endpoint |
 |---|---|
-| M3 Laporan & impor | `/reports/dashboard`, `/reports/daily-sales`, `/audit`, `/customer-imports…` |
+| M3 Laporan & impor | `/reports/daily-sales`, `/audit`, `/customer-imports…` (dashboard sudah ada, §8.10) |
 | M5 WhatsApp | `/wa/failures…`, `/wa/summary`, `/wa/templates` |
 
 Endpoint yang belum ada membalas `404 NOT_FOUND`.
@@ -622,3 +673,4 @@ Endpoint yang belum ada membalas `404 NOT_FOUND`.
 |---|---|
 | 14 September 2026 | Versi pertama untuk M1. Login tanpa aktivasi perangkat (`X-Device-Id` menggantikan token perangkat). |
 | 15 September 2026 | M2: order, antrean offline, shift & kas, cache tablet (`/sync/bootstrap`, `/sync/changes`), heartbeat. Mengacu PRD Draft 1.2. |
+| 16 September 2026 | M3 dimulai: `GET /reports/dashboard` (§8.10) — halaman Laporan owner dengan periode eksplisit. |

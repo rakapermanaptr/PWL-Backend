@@ -1559,6 +1559,76 @@ paths:
           $ref: "#/components/responses/Conflict"
 
   # ---------------------------------------------------------------------------------------------
+  # Laporan owner — PRD §8.9, dihitung per §9.4
+  # ---------------------------------------------------------------------------------------------
+  /api/v1/reports/dashboard:
+    get:
+      tags: [report]
+      summary: Halaman Laporan owner
+      description: |
+        Semua angka halaman Laporan dalam satu panggilan, dibaca dalam satu transaksi sehingga chart,
+        baris cabang, dan ringkasannya tidak pernah saling bertentangan. Owner saja (`403 FORBIDDEN`).
+
+        Periode selalu eksplisit (T11 — klien lama menghitung metrik sepanjang masa): `date` menentukan
+        hari yang dilaporkan (default hari ini WIB) dan `periodDays` (default 30) menentukan rentang
+        yang berakhir pada `date`. Omzet diakui pada tanggal bisnis `capturedAt`, jadi transaksi offline
+        yang tersinkron besok tetap masuk ke hari transaksinya.
+
+        Rasio bernilai `null` bila tidak ada yang bisa diukur — cabang tanpa customer melaporkan "belum
+        ada data", bukan 0%. `deliveryRate` tetap `null` sampai worker WhatsApp M5 berjalan: sebelum itu
+        pesan hanya `QUEUED` dan belum pernah punya kesempatan terkirim (T6).
+      operationId: getDashboard
+      parameters:
+        - name: branchId
+          in: query
+          required: false
+          description: Kosong = semua cabang. Cabang tidak dikenal → 404.
+          schema:
+            type: string
+            format: uuid
+        - name: date
+          in: query
+          required: false
+          description: Tanggal bisnis yang dilaporkan (Asia/Jakarta). Default hari ini.
+          schema:
+            type: string
+            format: date
+        - name: periodDays
+          in: query
+          required: false
+          description: Panjang rentang yang berakhir pada `date`, untuk rasio dan `topServices`.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+        - name: auditRangeDays
+          in: query
+          required: false
+          description: Jendela log audit pada halaman laporan — hari ini, 7 hari, atau 30 hari.
+          schema:
+            type: integer
+            enum: [1, 7, 30]
+            default: 1
+        - $ref: "#/components/parameters/DeviceIdOptional"
+        - $ref: "#/components/parameters/AppVersion"
+      responses:
+        "200":
+          description: Angka halaman Laporan untuk scope dan periode yang diminta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ---------------------------------------------------------------------------------------------
   # Sinkronisasi cache klien — PRD §8.10
   # ---------------------------------------------------------------------------------------------
   /api/v1/sync/bootstrap:
@@ -3211,6 +3281,205 @@ components:
         serverTime:
           $ref: "#/components/schemas/Timestamp"
 
+    AuditEntry:
+      type: object
+      required: [id, branchId, staffId, actorName, actionType, action, entityType, entityId, createdAt]
+      properties:
+        id:
+          type: integer
+          format: int64
+        branchId:
+          $ref: "#/components/schemas/NullableUuid"
+          description: "`null` = berlaku untuk semua cabang; entri ini selalu ikut di filter cabang mana pun."
+        staffId:
+          $ref: "#/components/schemas/NullableUuid"
+        actorName:
+          type: string
+          description: Format klien, "Siti N. (kasir)".
+          examples: ["Siti N. (kasir)"]
+        actionType:
+          type: string
+          description: PRD Lampiran C.
+          examples: [ORDER_CREATED]
+        action:
+          type: string
+          description: Kalimat Bahasa Indonesia yang ditampilkan di log audit.
+          examples: ["Buat order TBT-0915-001 — Rp45.000"]
+        entityType:
+          type: [string, "null"]
+        entityId:
+          type: [string, "null"]
+        createdAt:
+          $ref: "#/components/schemas/Timestamp"
+
+    DashboardShift:
+      type: object
+      required: [id, open, openedByName, openedAt, closedAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+        open:
+          type: boolean
+        openedByName:
+          type: string
+        openedAt:
+          $ref: "#/components/schemas/Timestamp"
+        closedAt:
+          $ref: "#/components/schemas/NullableTimestamp"
+
+    DashboardBranchRow:
+      type: object
+      required:
+        [branchId, code, name, active, revenue, txCount, readyForPickup, dailyTarget, targetRatio, latestShift]
+      properties:
+        branchId:
+          $ref: "#/components/schemas/Uuid"
+        code:
+          type: string
+        name:
+          type: string
+        active:
+          type: boolean
+        revenue:
+          type: integer
+          format: int64
+          description: Omzet cabang pada `date`.
+        txCount:
+          type: integer
+        readyForPickup:
+          type: integer
+        dailyTarget:
+          type: integer
+          format: int64
+        targetRatio:
+          type: [number, "null"]
+          description: "`revenue ÷ dailyTarget` (1.12 = 112% target); `null` bila target belum diisi."
+        latestShift:
+          oneOf:
+            - $ref: "#/components/schemas/DashboardShift"
+            - type: "null"
+
+    ChartBranchRevenue:
+      type: object
+      required: [branchId, revenue]
+      properties:
+        branchId:
+          $ref: "#/components/schemas/Uuid"
+        revenue:
+          type: integer
+          format: int64
+
+    ChartDay:
+      type: object
+      required: [date, total, branches]
+      properties:
+        date:
+          type: string
+          format: date
+        total:
+          type: integer
+          format: int64
+        branches:
+          type: array
+          description: Satu entri per cabang dalam scope, juga pada hari tanpa penjualan.
+          items:
+            $ref: "#/components/schemas/ChartBranchRevenue"
+
+    TopService:
+      type: object
+      required: [name, revenue, share]
+      properties:
+        name:
+          type: string
+          description: Nama layanan, atau "Lainnya" untuk gabungan sisanya.
+        revenue:
+          type: integer
+          format: int64
+        share:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    DashboardResponse:
+      type: object
+      required:
+        [date, branchId, periodDays, periodFrom, periodTo, auditRangeDays, revenueToday, txToday,
+         revenueYesterday, readyForPickup, staleReady, optInRate, deliveryRate, redemptionRate,
+         pendingSync, branchRows, chart, topServices, audit, auditTruncated]
+      properties:
+        date:
+          type: string
+          format: date
+          description: Tanggal bisnis yang dilaporkan (Asia/Jakarta).
+        branchId:
+          $ref: "#/components/schemas/NullableUuid"
+          description: "`null` = semua cabang."
+        periodDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+        periodFrom:
+          type: string
+          format: date
+        periodTo:
+          type: string
+          format: date
+        auditRangeDays:
+          type: integer
+          enum: [1, 7, 30]
+        revenueToday:
+          type: integer
+          format: int64
+        txToday:
+          type: integer
+        revenueYesterday:
+          type: integer
+          format: int64
+        readyForPickup:
+          type: integer
+          description: Order berstatus SIAP di scope, semua tanggal.
+        staleReady:
+          type: integer
+          description: Bagian dari `readyForPickup` yang sudah lebih dari 72 jam berstatus SIAP.
+        optInRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        deliveryRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+          description: "`null` sampai worker WhatsApp M5 berjalan — sebelum itu pesan hanya `QUEUED`."
+        redemptionRate:
+          type: [number, "null"]
+          minimum: 0
+          maximum: 1
+        pendingSync:
+          type: integer
+          description: Σ `pendingCount` heartbeat tablet di scope.
+        branchRows:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardBranchRow"
+        chart:
+          type: array
+          description: 7 hari yang berakhir pada `date`, terlama dulu.
+          items:
+            $ref: "#/components/schemas/ChartDay"
+        topServices:
+          type: array
+          description: 4 layanan terbesar pada periode + "Lainnya"; kosong bila belum ada penjualan.
+          items:
+            $ref: "#/components/schemas/TopService"
+        audit:
+          type: array
+          description: Paling banyak 100 entri terbaru di jendela `auditRangeDays`.
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        auditTruncated:
+          type: boolean
+          description: Jendela audit berisi lebih banyak entri daripada yang dibawa `audit` — sisanya di `GET /audit`.
+
   responses:
     ValidationError:
       description: "400 — body atau parameter tidak valid secara format; `details.fields` berisi daftar field."
@@ -3355,7 +3624,6 @@ x-planned-endpoints:
     `paths`.
   M3:
     report:
-      - GET /api/v1/reports/dashboard
       - GET /api/v1/reports/daily-sales
       - GET /api/v1/audit
     customer-import:

@@ -25,8 +25,14 @@ penolakan), shift & kas dengan rekap, `Idempotency-Key`, cache tablet (`/sync/bo
 `/sync/changes` dengan watermark id transaksi), dan heartbeat. Skenario PRD §16 #1–#11 lolos (untuk #8 sampai pesan `QUEUED` — pengirimannya M5), termasuk
 uji konkurensi paralel. `openapi.yaml` menspesifikasikan semua endpoint M1–M2 dan setiap respons
 divalidasi terhadapnya. Keputusan yang terisi saat implementasi sudah diterapkan ke PRD Draft 1.2 (riwayat:
-[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md)). Berikutnya:
-laporan & impor (M3).
+[`docs/prd-gaps-m1.md`](docs/prd-gaps-m1.md), [`docs/prd-gaps-m2.md`](docs/prd-gaps-m2.md)).
+
+**M3 sedang berjalan di `development`.** Bagian pertamanya sudah ada: `GET /reports/dashboard` — seluruh
+halaman Laporan owner dalam satu panggilan, dengan periode yang selalu eksplisit (`date` + `periodDays`,
+default 30 hari — bukan sepanjang masa seperti klien lama, T11). Rasio bernilai `null` bila belum ada yang
+bisa diukur, dan `deliveryRate` tetap `null` sampai worker WhatsApp M5 berjalan. Keputusan yang diambil
+saat implementasi menunggu persetujuan owner di [`docs/prd-gaps-m3.md`](docs/prd-gaps-m3.md). Menyusul di
+M3: `/reports/daily-sales`, `/audit`, impor CSV customer, error report, load test, dan security review.
 
 | Sudah jalan di M0 | Perintah |
 |---|---|
@@ -43,7 +49,7 @@ laporan & impor (M3).
 | M0 Fondasi | Repo, CI, container, Postgres + migrasi, seed pilot, draft OpenAPI, staging | ✅ staging aktif, skema V2 di `main` |
 | M1 Identitas & master data | Login PIN tanpa aktivasi, cabang, staff, price list, loyalty, reward, customer, audit | ✅ di `main` & staging |
 | M2 Transaksi | Order + event layer, nomor order, advance status, shift & kas, sync offline, delta sync, **penulisan baris outbox WA** | ✅ di `main` & staging |
-| M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | 🔨 berikutnya |
+| M3 Laporan & impor | Dashboard, filter audit, impor CSV, error report, load test, security review | 🔨 dashboard selesai di `development`; sisanya jalan |
 | M4 Shadow mode | Dry-run 3–5 hari paralel dengan SaaS lama + UAT (belum mengirim WA) | ⬜ |
 | M5 Integrasi Meta/WhatsApp | Worker, Cloud API client, retry, webhook, opt-out STOP, failures API, summary | ⬜ |
 | M6 Go-live | Cutover cabang pilot, monitoring intensif 2 minggu | ⬜ |
