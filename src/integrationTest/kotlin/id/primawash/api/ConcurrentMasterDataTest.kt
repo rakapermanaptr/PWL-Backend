@@ -38,14 +38,14 @@ class ConcurrentMasterDataTest {
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "TBT",
+                        "FMU",
                         "1234",
                     ).string("accessToken")
             val nia =
                 api
                     .login(
                         ApiTestSupport.newDevice(),
-                        "BTR",
+                        "NRG",
                         "2468",
                     ).string("accessToken")
             val body = """{"name":"Dewi Anggraini","phone":"081233904471","optIn":true}"""
@@ -61,20 +61,20 @@ class ConcurrentMasterDataTest {
     fun `should give a pin to only one of two accounts created together`() =
         apiTest { api ->
             val owner = api.ownerToken()
-            val tebet = ApiTestSupport.branchId("TBT")
+            val familiaUrban = ApiTestSupport.branchId("FMU")
             val statuses =
                 race(
                     {
                         api.post(
                             "/staff",
-                            """{"name":"Andi","pin":"8080","role":"KASIR","branchId":"$tebet"}""",
+                            """{"name":"Andi","pin":"8080","role":"KASIR","branchId":"$familiaUrban"}""",
                             owner,
                         )
                     },
                     {
                         api.post(
                             "/staff",
-                            """{"name":"Budi","pin":"8080","role":"KASIR","branchId":"$tebet"}""",
+                            """{"name":"Budi","pin":"8080","role":"KASIR","branchId":"$familiaUrban"}""",
                             owner,
                         )
                     },

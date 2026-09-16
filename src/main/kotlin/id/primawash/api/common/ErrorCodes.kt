@@ -4,7 +4,7 @@ package id.primawash.api.common
  * Every business error code of the API (PRD Lampiran B) plus the transport-level ones from §6.2.
  *
  * Only the codes live here — the Indonesian `message` text belongs to the Service that raises the
- * error, because most messages are parameterised ("Shift Cabang Tebet belum dibuka — …").
+ * error, because most messages are parameterised ("Shift Cabang Familia Urban belum dibuka — …").
  * Inventing a code or rewording a message requires a PRD update and a heads-up to the Android team:
  * the client displays both verbatim.
  */

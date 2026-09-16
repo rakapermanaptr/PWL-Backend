@@ -2,11 +2,11 @@ package id.primawash.api.report
 
 import id.primawash.api.branch.BranchService
 import id.primawash.api.common.NotFoundException
-import id.primawash.api.support.BINTARO
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.FIXED_CLOCK
+import id.primawash.api.support.NAROGONG
 import id.primawash.api.support.NOW
-import id.primawash.api.support.TEBET
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -28,9 +28,9 @@ class ReportServiceTest {
     private val service = ReportService(DirectTransactionRunner, repository, branches, FIXED_CLOCK)
 
     init {
-        every { branches.findAll() } returns listOf(TEBET, BINTARO)
+        every { branches.findAll() } returns listOf(FAMILIA_URBAN, NAROGONG)
         every { branches.find(any()) } returns null
-        every { branches.find(TEBET.id) } returns TEBET
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN
         every { branches.latestShifts() } returns emptyMap()
         every { repository.dailySales(any(), any(), any()) } returns emptyList()
         every { repository.readyForPickup(any(), any()) } returns emptyMap()
@@ -67,16 +67,16 @@ class ReportServiceTest {
     @Test
     fun `should count only the named branch when the owner picks one`() =
         runBlocking<Unit> {
-            every { repository.dailySales(listOf(TEBET.id), any(), any()) } returns
-                listOf(BranchDaySales(TEBET.id, TODAY, 1_250_000, 9))
+            every { repository.dailySales(listOf(FAMILIA_URBAN.id), any(), any()) } returns
+                listOf(BranchDaySales(FAMILIA_URBAN.id, TODAY, 1_250_000, 9))
 
-            val dashboard = service.dashboard(TEBET.id, null, 30, 1)
+            val dashboard = service.dashboard(FAMILIA_URBAN.id, null, 30, 1)
 
-            dashboard.branchId shouldBe TEBET.id
-            dashboard.branchRows.map { it.branch.id } shouldBe listOf(TEBET.id)
+            dashboard.branchId shouldBe FAMILIA_URBAN.id
+            dashboard.branchRows.map { it.branch.id } shouldBe listOf(FAMILIA_URBAN.id)
             dashboard.revenueToday shouldBe 1_250_000
             dashboard.txToday shouldBe 9
-            verify { repository.optIn(listOf(TEBET.id)) }
+            verify { repository.optIn(listOf(FAMILIA_URBAN.id)) }
         }
 
     @Test
@@ -90,9 +90,9 @@ class ReportServiceTest {
         runBlocking<Unit> {
             every { repository.dailySales(any(), any(), any()) } returns
                 listOf(
-                    BranchDaySales(TEBET.id, TODAY, 1_000_000, 8),
-                    BranchDaySales(BINTARO.id, TODAY, 400_000, 3),
-                    BranchDaySales(TEBET.id, TODAY.minusDays(1), 900_000, 7),
+                    BranchDaySales(FAMILIA_URBAN.id, TODAY, 1_000_000, 8),
+                    BranchDaySales(NAROGONG.id, TODAY, 400_000, 3),
+                    BranchDaySales(FAMILIA_URBAN.id, TODAY.minusDays(1), 900_000, 7),
                 )
 
             val dashboard = service.dashboard(null, null, 30, 1)
@@ -107,7 +107,7 @@ class ReportServiceTest {
     fun `should draw seven chart days oldest first even with no sales`() =
         runBlocking<Unit> {
             every { repository.dailySales(any(), any(), any()) } returns
-                listOf(BranchDaySales(TEBET.id, TODAY, 1_000_000, 8))
+                listOf(BranchDaySales(FAMILIA_URBAN.id, TODAY, 1_000_000, 8))
 
             val chart = service.dashboard(null, null, 30, 1).chart
 
@@ -116,7 +116,12 @@ class ReportServiceTest {
             chart.last().date shouldBe TODAY
             chart.first().total shouldBe 0
             chart.last().total shouldBe 1_000_000
-            chart.map { it.branches.map { row -> row.branchId } }.all { it == listOf(TEBET.id, BINTARO.id) } shouldBe
+            chart
+                .map {
+                    it.branches.map { row ->
+                        row.branchId
+                    }
+                }.all { it == listOf(FAMILIA_URBAN.id, NAROGONG.id) } shouldBe
                 true
         }
 
@@ -124,7 +129,7 @@ class ReportServiceTest {
     fun `should compare revenue against each branch's own target`() =
         runBlocking<Unit> {
             every { repository.dailySales(any(), any(), any()) } returns
-                listOf(BranchDaySales(TEBET.id, TODAY, 2_600_000, 20))
+                listOf(BranchDaySales(FAMILIA_URBAN.id, TODAY, 2_600_000, 20))
 
             val rows = service.dashboard(null, null, 30, 1).branchRows
 
@@ -136,7 +141,7 @@ class ReportServiceTest {
     fun `should count orders left ready for pickup and the stale ones among them`() =
         runBlocking<Unit> {
             every { repository.readyForPickup(any(), NOW.minus(Duration.ofHours(72))) } returns
-                mapOf(TEBET.id to ReadyCounts(6, 2), BINTARO.id to ReadyCounts(3, 0))
+                mapOf(FAMILIA_URBAN.id to ReadyCounts(6, 2), NAROGONG.id to ReadyCounts(3, 0))
 
             val dashboard = service.dashboard(null, null, 30, 1)
 
@@ -186,11 +191,11 @@ class ReportServiceTest {
     private fun auditRecord(id: Long) =
         AuditRecord(
             id = id,
-            branchId = TEBET.id,
+            branchId = FAMILIA_URBAN.id,
             staffId = UUID.randomUUID(),
             actorName = "Siti N. (kasir)",
             actionType = "ORDER_CREATED",
-            action = "Buat order TBT-0915-001",
+            action = "Buat order FMU-0915-001",
             entityType = "order",
             entityId = UUID.randomUUID().toString(),
             createdAt = NOW,

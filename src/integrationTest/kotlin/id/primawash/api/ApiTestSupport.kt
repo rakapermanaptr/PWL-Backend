@@ -201,7 +201,7 @@ class TestApi(
         )
 
     suspend fun ownerToken(deviceId: String = ApiTestSupport.newDevice()): String =
-        login(deviceId, "TBT", "9090").string("accessToken")
+        login(deviceId, "FMU", "9090").string("accessToken")
 
     private fun HttpRequestBuilder.auth(token: String?) {
         token?.let { bearerAuth(it) }

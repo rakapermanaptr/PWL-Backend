@@ -72,12 +72,12 @@ object TxFixtures {
         points,
         optIn,
         18,
-        TEBET.id,
+        FAMILIA_URBAN.id,
         optInAt,
     )
 
     fun shift(
-        branchId: UUID = TEBET.id,
+        branchId: UUID = FAMILIA_URBAN.id,
         closedAt: Instant? = null,
         openingCash: Long = 500_000,
         cashSales: Long = 0,
@@ -103,11 +103,11 @@ object TxFixtures {
     fun order(
         status: OrderStatus = OrderStatus.DITERIMA,
         customer: CustomerRecord? = null,
-        branchId: UUID = TEBET.id,
+        branchId: UUID = FAMILIA_URBAN.id,
         waStatus: WaStatus = if (customer?.optIn == true) WaStatus.MENUNGGU else WaStatus.BELUM_OPTIN,
     ) = OrderRecord(
         id = UUID.randomUUID(),
-        number = "TBT-0915-001",
+        number = "FMU-0915-001",
         branchId = branchId,
         businessDate = LocalDate.parse("2026-09-15"),
         clientTxId = UUID.randomUUID(),

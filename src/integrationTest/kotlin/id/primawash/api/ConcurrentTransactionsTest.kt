@@ -22,8 +22,8 @@ class ConcurrentTransactionsTest {
     @Test
     fun `should open one shift when two tablets open the branch at the same moment`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val bagas = api.till("TBT", "5678")
+            val siti = api.till("FMU", "1234")
+            val bagas = api.till("FMU", "5678")
             val sitiProof = api.staffProof(siti, "Siti Nurhaliza", "1234")
             val bagasProof = api.staffProof(bagas, "Bagas Ardhana", "5678")
 
@@ -61,7 +61,7 @@ class ConcurrentTransactionsTest {
     @Test
     fun `should record one order when a retry races the original with the same key`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val body = Tx.orderBody(Tx.key(), listOf(Line(cuciSetrika, "3", 10_000)), 30_000)
             val key = Tx.key()
@@ -79,8 +79,8 @@ class ConcurrentTransactionsTest {
     @Test
     fun `should give two orders saved together in one branch different numbers`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val bagas = api.till("TBT", "5678")
+            val siti = api.till("FMU", "1234")
+            val bagas = api.till("FMU", "5678")
             api.openShift(siti, "Siti Nurhaliza", "1234")
 
             val responses =
@@ -91,15 +91,15 @@ class ConcurrentTransactionsTest {
 
             responses.map { it.status } shouldBe listOf(HttpStatusCode.Created, HttpStatusCode.Created)
             responses.map { it.json().obj("order").string("number") } shouldContainExactlyInAnyOrder
-                listOf("TBT-0915-001", "TBT-0915-002")
+                listOf("FMU-0915-001", "FMU-0915-002")
             scalar("SELECT cash_sales || '/' || tx_count FROM shifts") shouldBe "30000/2"
         }
 
     @Test
     fun `should let one of two tablets advance the same order`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val bagas = api.till("TBT", "5678")
+            val siti = api.till("FMU", "1234")
+            val bagas = api.till("FMU", "5678")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = true)
             val id =
@@ -134,7 +134,7 @@ class ConcurrentTransactionsTest {
     @Test
     fun `should record each offline transaction once when the queue is sent twice at the same time`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val shift = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             val batch =
                 Tx.syncBody(

@@ -14,9 +14,9 @@ import id.primawash.api.shift.ShiftRecord
 import id.primawash.api.shift.ShiftService
 import id.primawash.api.staff.StaffService
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.FIXED_CLOCK
 import id.primawash.api.support.NOW
-import id.primawash.api.support.TEBET
 import id.primawash.api.support.TxFixtures
 import id.primawash.api.support.TxFixtures.CUCI_SETRIKA
 import id.primawash.api.support.TxFixtures.GORDEN
@@ -69,7 +69,7 @@ class OrderSyncServiceTest {
 
     init {
         every { idempotency.find(any()) } returns null
-        every { branches.find(TEBET.id) } returns TEBET
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN
         every { repository.findByClientTxId(any()) } returns null
         every { catalog.findServices(any()) } answers {
             listOf(CUCI_SETRIKA, GORDEN).filter { it.id in firstArg<Collection<UUID>>() }.associateBy { it.id }
@@ -77,13 +77,13 @@ class OrderSyncServiceTest {
         every { catalog.priceAt(any(), any()) } answers { firstArg<id.primawash.api.catalog.ServiceRecord>().price }
         every { catalog.rateAt(any()) } returns TxFixtures.RATE
         every { shifts.lockShift(openShift.id) } returns openShift
-        every { shifts.lockOpenShift(TEBET.id) } returns openShift
+        every { shifts.lockOpenShift(FAMILIA_URBAN.id) } returns openShift
         every { sales.record(any()) } answers {
             val draft = firstArg<SaleDraft>()
             drafts += draft
             val order =
                 TxFixtures.order().copy(
-                    number = "TBT-0915-00${drafts.size}",
+                    number = "FMU-0915-00${drafts.size}",
                     clientTxId = draft.clientTxId,
                     source = OrderSource.OFFLINE_SYNC,
                     total = draft.totals.total,
@@ -125,7 +125,7 @@ class OrderSyncServiceTest {
         outcome.rejectedCount shouldBe 1
         outcome.total shouldBe 40_000
         audit.second.last().action shouldBe
-            "Sync 2 transaksi offline Cabang Tebet · Rp40.000 · ID TBT-0915-001–TBT-0915-002"
+            "Sync 2 transaksi offline Cabang Familia Urban · Rp40.000 · ID FMU-0915-001–FMU-0915-002"
         audit.second.count { it.type == AuditActionType.ORDER_SYNCED } shouldBe 3
         verify { idempotency.save(TxFixtures.IDEMPOTENCY, any()) }
     }
@@ -168,7 +168,7 @@ class OrderSyncServiceTest {
         drafts.single().totals.total shouldBe 38_000
         order.flags shouldContainExactly listOf(OrderFlag.PRICE_MISMATCH, OrderFlag.SERVICE_INACTIVE)
         audit.second.first().action shouldBe
-            "Transaksi TBT-0915-001 · Rp38.000 · Tunai · offline · ditandai: harga beda dengan price list, " +
+            "Transaksi FMU-0915-001 · Rp38.000 · Tunai · offline · ditandai: harga beda dengan price list, " +
             "layanan sudah nonaktif"
     }
 
@@ -208,7 +208,7 @@ class OrderSyncServiceTest {
         }
 
         // Nothing open: back to its own closed shift, flagged.
-        every { shifts.lockOpenShift(TEBET.id) } returns null
+        every { shifts.lockOpenShift(FAMILIA_URBAN.id) } returns null
         sync(tx(shiftId = closedShift.id)).results.single().order!!.let {
             it.shiftId shouldBe closedShift.id
             it.flags shouldContainExactly listOf(OrderFlag.LATE_AFTER_SHIFT_CLOSE)
@@ -216,7 +216,7 @@ class OrderSyncServiceTest {
 
         // No shift reported: the branch's latest.
         val latest = closed()
-        every { shifts.lockLatestShift(TEBET.id) } returns latest
+        every { shifts.lockLatestShift(FAMILIA_URBAN.id) } returns latest
         sync(tx(shiftId = null))
             .results
             .single()
@@ -224,7 +224,7 @@ class OrderSyncServiceTest {
             .shiftId shouldBe latest.id
 
         // A branch that never had a shift has nowhere to put the money.
-        every { shifts.lockLatestShift(TEBET.id) } returns null
+        every { shifts.lockLatestShift(FAMILIA_URBAN.id) } returns null
         sync(tx(shiftId = null))
             .results
             .single()
@@ -276,7 +276,7 @@ class OrderSyncServiceTest {
     fun `should map a customer registered offline to the customer who already has that phone`() {
         val dewi = TxFixtures.customer()
         val tabletId = UUID.randomUUID()
-        every { customers.resolveOffline(tabletId, "Dewi", "0812-3390-4471", true, TEBET.id, any()) } returns
+        every { customers.resolveOffline(tabletId, "Dewi", "0812-3390-4471", true, FAMILIA_URBAN.id, any()) } returns
             OfflineCustomer(dewi, matchedByPhone = true)
 
         val result =

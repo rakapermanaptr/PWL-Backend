@@ -28,28 +28,31 @@ class AuthFlowTest {
     fun `should log a cashier in with just a branch and a pin`() =
         apiTest { api ->
             val device = ApiTestSupport.newDevice()
-            val login = api.login(device, "TBT", "1234")
+            val login = api.login(device, "FMU", "1234")
 
             login.string("refreshToken") shouldStartWith "rt_"
             login.getValue("accessTokenExpiresIn").jsonPrimitive.content shouldBe "3600"
             login.getValue("refreshTokenExpiresIn").jsonPrimitive.content shouldBe "64800"
             login.obj("context").obj("staff").string("shortName") shouldBe "Siti N."
-            login.obj("context").obj("branch").string("code") shouldBe "TBT"
+            login.obj("context").obj("branch").string("code") shouldBe "FMU"
 
             val me = api.get("/me", login.string("accessToken"))
             me.status shouldBe HttpStatusCode.OK
             me.json().obj("staff").string("name") shouldBe "Siti Nurhaliza"
 
-            ApiTestSupport.auditCount("Login PIN sebagai kasir Tebet di perangkat Cabang Tebet") shouldBe 1
+            ApiTestSupport.auditCount(
+                "Login PIN sebagai kasir Familia Urban di perangkat Cabang Familia Urban",
+            ) shouldBe
+                1
             api.get("/login-options", deviceId = device).json().string("lastBranchId") shouldBe
-                ApiTestSupport.branchId("TBT").toString()
+                ApiTestSupport.branchId("FMU").toString()
         }
 
     @Test
     fun `should require the installation id on pin login`() =
         apiTest { api ->
             api
-                .post("/auth/pin-login", """{"branchId":"${ApiTestSupport.branchId("TBT")}","pin":"1234"}""")
+                .post("/auth/pin-login", """{"branchId":"${ApiTestSupport.branchId("FMU")}","pin":"1234"}""")
                 .shouldFailWith(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
         }
 
@@ -59,10 +62,10 @@ class AuthFlowTest {
             // PRD §16 #12
             val error =
                 api
-                    .pinLogin(ApiTestSupport.newDevice(), "BTR", "1234")
+                    .pinLogin(ApiTestSupport.newDevice(), "NRG", "1234")
                     .shouldFailWith(HttpStatusCode.UnprocessableEntity, "STAFF_WRONG_BRANCH")
             error.string("message") shouldBe
-                "Siti Nurhaliza terdaftar di Cabang Tebet — tidak bisa login di perangkat Cabang Bintaro."
+                "Siti Nurhaliza terdaftar di Cabang Familia Urban — tidak bisa login di perangkat Cabang Narogong."
             error
                 .obj("details")
                 .getValue("clearPin")
@@ -76,10 +79,10 @@ class AuthFlowTest {
             // PRD §16 #14
             val device = ApiTestSupport.newDevice()
             repeat(5) {
-                api.pinLogin(device, "TBT", "0000").shouldFailWith(HttpStatusCode.UnprocessableEntity, "PIN_UNKNOWN")
+                api.pinLogin(device, "FMU", "0000").shouldFailWith(HttpStatusCode.UnprocessableEntity, "PIN_UNKNOWN")
             }
 
-            val sixth = api.pinLogin(device, "TBT", "1234")
+            val sixth = api.pinLogin(device, "FMU", "1234")
             sixth.shouldFailWith(HttpStatusCode.Locked, "PIN_LOCKED").string("message") shouldBe
                 "Terlalu banyak PIN salah. Coba lagi dalam 5 menit."
             sixth.headers["Retry-After"] shouldBe "300"
@@ -89,7 +92,7 @@ class AuthFlowTest {
             api
                 .login(
                     ApiTestSupport.newDevice(),
-                    "TBT",
+                    "FMU",
                     "1234",
                 ).obj("context")
                 .obj("staff")
@@ -102,7 +105,7 @@ class AuthFlowTest {
         val clock = MutableClock()
         apiTest(clock) { api ->
             val device = ApiTestSupport.newDevice()
-            repeat(5) { api.pinLogin(device, "TBT", "0000") }
+            repeat(5) { api.pinLogin(device, "FMU", "0000") }
 
             clock.advance(
                 java.time.Duration
@@ -110,7 +113,7 @@ class AuthFlowTest {
                     .plusSeconds(1),
             )
             api
-                .login(device, "TBT", "1234")
+                .login(device, "FMU", "1234")
                 .obj("context")
                 .obj("staff")
                 .string("shortName") shouldBe "Siti N."
@@ -123,7 +126,7 @@ class AuthFlowTest {
             // PRD §16 #13
             val owner = api.ownerToken()
             val bagasDevice = ApiTestSupport.newDevice()
-            val bagas = api.login(bagasDevice, "TBT", "5678").string("accessToken")
+            val bagas = api.login(bagasDevice, "FMU", "5678").string("accessToken")
 
             val reset = api.post("/staff/${ApiTestSupport.staffId("Bagas Ardhana")}/reset-pin", token = owner)
             reset.status shouldBe HttpStatusCode.OK
@@ -131,9 +134,9 @@ class AuthFlowTest {
             val newPin = reset.json().string("pin")
 
             api.get("/me", bagas).shouldFailWith(HttpStatusCode.Unauthorized, "UNAUTHENTICATED")
-            api.pinLogin(bagasDevice, "TBT", "5678").shouldFailWith(HttpStatusCode.UnprocessableEntity, "PIN_UNKNOWN")
+            api.pinLogin(bagasDevice, "FMU", "5678").shouldFailWith(HttpStatusCode.UnprocessableEntity, "PIN_UNKNOWN")
             api
-                .login(bagasDevice, "TBT", newPin)
+                .login(bagasDevice, "FMU", newPin)
                 .obj("context")
                 .obj("staff")
                 .string("name") shouldBe "Bagas Ardhana"
@@ -143,7 +146,7 @@ class AuthFlowTest {
     fun `should rotate the refresh token and accept it only from the same tablet`() =
         apiTest { api ->
             val device = ApiTestSupport.newDevice()
-            val first = api.login(device, "TBT", "1234").string("refreshToken")
+            val first = api.login(device, "FMU", "1234").string("refreshToken")
 
             val refreshed = api.post("/auth/refresh", """{"refreshToken":"$first"}""", deviceId = device)
             refreshed.status shouldBe HttpStatusCode.OK
@@ -163,7 +166,7 @@ class AuthFlowTest {
     @Test
     fun `should hand the device to another staff member and end the previous session`() =
         apiTest { api ->
-            val siti = api.login(ApiTestSupport.newDevice(), "TBT", "1234").string("accessToken")
+            val siti = api.login(ApiTestSupport.newDevice(), "FMU", "1234").string("accessToken")
 
             val switched =
                 api.post(
@@ -180,15 +183,15 @@ class AuthFlowTest {
                 .json()
                 .obj("staff")
                 .string("shortName") shouldBe "Bagas A."
-            ApiTestSupport.auditCount("Login PIN sebagai kasir Tebet") shouldBe 1
+            ApiTestSupport.auditCount("Login PIN sebagai kasir Familia Urban") shouldBe 1
         }
 
     @Test
     fun `should keep one session per tablet`() =
         apiTest { api ->
             val device = ApiTestSupport.newDevice()
-            val siti = api.login(device, "TBT", "1234").string("accessToken")
-            api.login(device, "TBT", "5678")
+            val siti = api.login(device, "FMU", "1234").string("accessToken")
+            api.login(device, "FMU", "5678")
 
             api.get("/me", siti).shouldFailWith(HttpStatusCode.Unauthorized, "UNAUTHENTICATED")
         }
@@ -196,8 +199,8 @@ class AuthFlowTest {
     @Test
     fun `should lock an account after five consecutive wrong pins in verify pin`() =
         apiTest { api ->
-            val siti = api.login(ApiTestSupport.newDevice(), "TBT", "1234").string("accessToken")
-            val otherDevice = api.login(ApiTestSupport.newDevice(), "TBT", "5678").string("accessToken")
+            val siti = api.login(ApiTestSupport.newDevice(), "FMU", "1234").string("accessToken")
+            val otherDevice = api.login(ApiTestSupport.newDevice(), "FMU", "5678").string("accessToken")
             val bagasId = ApiTestSupport.staffId("Bagas Ardhana")
 
             // Spread over two tablets so the per-device limit does not trigger first.
@@ -221,7 +224,7 @@ class AuthFlowTest {
     @Test
     fun `should issue a single use staff proof for a correct pin`() =
         apiTest { api ->
-            val siti = api.login(ApiTestSupport.newDevice(), "TBT", "1234").string("accessToken")
+            val siti = api.login(ApiTestSupport.newDevice(), "FMU", "1234").string("accessToken")
             val response =
                 api.post(
                     "/auth/verify-pin",
@@ -239,12 +242,12 @@ class AuthFlowTest {
     @Test
     fun `should keep a cashier's device on their branch`() =
         apiTest { api ->
-            val siti = api.login(ApiTestSupport.newDevice(), "TBT", "1234").string("accessToken")
+            val siti = api.login(ApiTestSupport.newDevice(), "FMU", "1234").string("accessToken")
             api
-                .post("/auth/switch-branch", """{"branchId":"${ApiTestSupport.branchId("BTR")}"}""", siti)
+                .post("/auth/switch-branch", """{"branchId":"${ApiTestSupport.branchId("NRG")}"}""", siti)
                 .shouldFailWith(HttpStatusCode.Forbidden, "OWNER_ONLY")
                 .string("message") shouldBe
-                "Perangkat kasir terikat ke Cabang Tebet. " +
+                "Perangkat kasir terikat ke Cabang Familia Urban. " +
                 "Hanya owner/admin yang bisa memindahkan perangkat ke cabang lain."
         }
 
@@ -256,7 +259,7 @@ class AuthFlowTest {
             val response =
                 api.post(
                     "/auth/switch-branch",
-                    """{"branchId":"${ApiTestSupport.branchId("BTR")}"}""",
+                    """{"branchId":"${ApiTestSupport.branchId("NRG")}"}""",
                     owner,
                 )
 
@@ -267,19 +270,19 @@ class AuthFlowTest {
                 .get("/me", body.string("accessToken"))
                 .json()
                 .obj("branch")
-                .string("code") shouldBe "BTR"
+                .string("code") shouldBe "NRG"
             api.get("/me", owner).shouldFailWith(HttpStatusCode.Unauthorized, "UNAUTHENTICATED")
             api.get("/login-options", deviceId = device).json().string("lastBranchId") shouldBe
-                ApiTestSupport.branchId("BTR").toString()
+                ApiTestSupport.branchId("NRG").toString()
         }
 
     @Test
     fun `should log out and return the branch to preselect`() =
         apiTest { api ->
-            val siti = api.login(ApiTestSupport.newDevice(), "TBT", "1234").string("accessToken")
+            val siti = api.login(ApiTestSupport.newDevice(), "FMU", "1234").string("accessToken")
             val response = api.post("/auth/logout", token = siti)
 
-            response.json().string("lastBranchId") shouldBe ApiTestSupport.branchId("TBT").toString()
+            response.json().string("lastBranchId") shouldBe ApiTestSupport.branchId("FMU").toString()
             api.get("/me", siti).shouldFailWith(HttpStatusCode.Unauthorized, "UNAUTHENTICATED")
         }
 

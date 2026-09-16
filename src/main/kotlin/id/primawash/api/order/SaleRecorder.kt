@@ -180,7 +180,7 @@ class SaleRecorder(
         const val EVENT_CREATED = "CREATED"
         private const val SEQ_DIGITS = 3
 
-        /** `{branch.code}-{MMdd}-{seq 3 digit}` → "TBT-0829-015" (PRD §7.3). */
+        /** `{branch.code}-{MMdd}-{seq 3 digit}` → "FMU-0829-015" (PRD §7.3). */
         fun orderNumber(
             branchCode: String,
             capturedAt: Instant,

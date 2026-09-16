@@ -9,11 +9,11 @@ import id.primawash.api.common.Idempotent
 import id.primawash.api.common.StoredResponse
 import id.primawash.api.customer.CustomerService
 import id.primawash.api.shift.ShiftService
-import id.primawash.api.support.BINTARO
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.FIXED_CLOCK
+import id.primawash.api.support.NAROGONG
 import id.primawash.api.support.NOW
-import id.primawash.api.support.TEBET
 import id.primawash.api.support.TxFixtures
 import id.primawash.api.support.TxFixtures.BED_COVER
 import id.primawash.api.support.TxFixtures.CUCI_SETRIKA
@@ -72,9 +72,9 @@ class OrderServiceTest {
     private val drafts = slot<SaleDraft>()
 
     init {
-        every { branches.find(TEBET.id) } returns TEBET
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN
         every { repository.findByClientTxId(any()) } returns null
-        every { shifts.lockOpenShift(TEBET.id) } returns shift
+        every { shifts.lockOpenShift(FAMILIA_URBAN.id) } returns shift
         every { catalog.findServices(any()) } answers {
             listOf(
                 CUCI_SETRIKA,
@@ -144,7 +144,7 @@ class OrderServiceTest {
         placed.order.total shouldBe 31_000
         audit.second.map { it.type } shouldContainExactly
             listOf(AuditActionType.ORDER_CREATED, AuditActionType.REWARD_REDEEMED)
-        audit.second.first().action shouldBe "Transaksi TBT-0915-001 · Rp31.000 · Tunai · redeem 1.500 poin"
+        audit.second.first().action shouldBe "Transaksi FMU-0915-001 · Rp31.000 · Tunai · redeem 1.500 poin"
     }
 
     @Test
@@ -158,17 +158,17 @@ class OrderServiceTest {
                 expectedTotal = 1,
             )
 
-        every { branches.find(TEBET.id) } returns null
+        every { branches.find(FAMILIA_URBAN.id) } returns null
         failure(everythingWrong).message shouldBe "Cabang tidak ditemukan."
-        every { branches.find(TEBET.id) } returns TEBET
+        every { branches.find(FAMILIA_URBAN.id) } returns FAMILIA_URBAN
 
-        every { shifts.lockOpenShift(TEBET.id) } returns null
+        every { shifts.lockOpenShift(FAMILIA_URBAN.id) } returns null
         failure(everythingWrong).let {
             it.code shouldBe "SHIFT_NOT_OPEN"
-            it.message shouldBe "Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi."
+            it.message shouldBe "Shift Cabang Familia Urban belum dibuka — buka shift dulu sebelum mencatat transaksi."
         }
         failure(command(items = emptyList())).code shouldBe "SHIFT_NOT_OPEN"
-        every { shifts.lockOpenShift(TEBET.id) } returns shift
+        every { shifts.lockOpenShift(FAMILIA_URBAN.id) } returns shift
 
         failure(everythingWrong.copy(items = emptyList())).let {
             it.code shouldBe "EMPTY_CART"
@@ -253,7 +253,7 @@ class OrderServiceTest {
                 .getValue("order")
                 .jsonObject
                 .getValue("number")
-                .jsonPrimitive.content shouldBe "TBT-0915-001"
+                .jsonPrimitive.content shouldBe "FMU-0915-001"
         }
         verify(exactly = 0) { sales.record(any()) }
     }
@@ -303,7 +303,7 @@ class OrderServiceTest {
 
     @Test
     fun `should keep a cashier out of another branch's orders`() {
-        val order = TxFixtures.order(branchId = BINTARO.id)
+        val order = TxFixtures.order(branchId = NAROGONG.id)
 
         assertThrows<ForbiddenException> { advance(order, OrderStatus.DITERIMA) }.code shouldBe "BRANCH_SCOPE"
     }
@@ -318,8 +318,17 @@ class OrderServiceTest {
         result.outcome shouldBe AdvanceOutcome.ADVANCED
         result.notificationQueued shouldBe true
         verify { repository.updateStatus(order.id, OrderStatus.SIAP, WaStatus.MENUNGGU, NOW) }
-        verify { whatsApp.queueReadyForPickup(TEBET.id, order.id, any(), "TBT-0915-001", "Tebet", TEBET.hours) }
-        audit.second.single().action shouldBe "Ubah status TBT-0915-001 → Siap diambil · WA dijadwalkan"
+        verify {
+            whatsApp.queueReadyForPickup(
+                FAMILIA_URBAN.id,
+                order.id,
+                any(),
+                "FMU-0915-001",
+                "Familia Urban",
+                FAMILIA_URBAN.hours,
+            )
+        }
+        audit.second.single().action shouldBe "Ubah status FMU-0915-001 → Siap diambil · WA dijadwalkan"
     }
 
     @Test
@@ -332,7 +341,7 @@ class OrderServiceTest {
 
         result.notificationQueued shouldBe false
         verify { repository.updateStatus(order.id, OrderStatus.SIAP, WaStatus.BELUM_OPTIN, NOW) }
-        audit.second.single().action shouldBe "Ubah status TBT-0915-001 → Siap diambil"
+        audit.second.single().action shouldBe "Ubah status FMU-0915-001 → Siap diambil"
     }
 
     @Test
@@ -343,6 +352,6 @@ class OrderServiceTest {
 
         verify(exactly = 0) { whatsApp.queueReadyForPickup(any(), any(), any(), any(), any(), any()) }
         audit.second.map { it.action } shouldContainExactly
-            listOf("Ubah status TBT-0915-001 → Siap diambil", "Ubah status TBT-0915-001 → Diproses")
+            listOf("Ubah status FMU-0915-001 → Siap diambil", "Ubah status FMU-0915-001 → Diproses")
     }
 }

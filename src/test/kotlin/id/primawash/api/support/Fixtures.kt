@@ -25,23 +25,23 @@ object DirectTransactionRunner : TransactionRunner {
 val NOW: Instant = Instant.parse("2026-09-15T02:00:00Z")
 val FIXED_CLOCK: Clock = Clock.fixed(NOW, ZoneOffset.UTC)
 
-val TEBET =
+val FAMILIA_URBAN =
     BranchRecord(
         UUID.randomUUID(),
-        "TBT",
-        "Tebet",
-        "Jl. Tebet Raya No. 42",
+        "FMU",
+        "Familia Urban",
+        "Ruko Arundaya, Jl. Familia Urban Blok DD. 21",
         "021-8290-1147",
         "07.00 – 21.00",
         5_200_000,
         true,
     )
-val BINTARO =
+val NAROGONG =
     BranchRecord(
         UUID.randomUUID(),
-        "BTR",
-        "Bintaro",
-        "Jl. Bintaro Utama",
+        "NRG",
+        "Narogong",
+        "Jl. Narogong Indah No.12 Blok C 8, RT.005/RW.012",
         "021-7345-6620",
         "07.00 – 21.00",
         3_400_000,
@@ -51,7 +51,7 @@ val BINTARO =
 fun staffRecord(
     name: String,
     role: Role = Role.KASIR,
-    branchId: UUID? = TEBET.id,
+    branchId: UUID? = FAMILIA_URBAN.id,
     active: Boolean = true,
     pinLookup: String = "lookup-$name",
     failedCount: Int = 0,
@@ -71,16 +71,16 @@ fun staffRecord(
 )
 
 fun deviceRecord(
-    name: String = "Tablet Cabang Tebet",
+    name: String = "Tablet Cabang Familia Urban",
     lockedUntil: Instant? = null,
-    lastBranchId: UUID? = TEBET.id,
+    lastBranchId: UUID? = FAMILIA_URBAN.id,
 ) = DeviceRecord(UUID.randomUUID(), name, "ANDROID", "1.4.0", lastBranchId, NOW, null, 0, null, lockedUntil)
 
 val OWNER_ACTOR = AuditActor(UUID.randomUUID(), "Raka (owner)", UUID.randomUUID())
 
 fun principal(
     staff: StaffRecord,
-    branch: BranchRecord = TEBET,
+    branch: BranchRecord = FAMILIA_URBAN,
     deviceId: UUID = UUID.randomUUID(),
 ) = StaffPrincipal(
     UUID.randomUUID(),

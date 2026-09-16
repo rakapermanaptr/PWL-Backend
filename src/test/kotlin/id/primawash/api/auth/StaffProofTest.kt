@@ -4,11 +4,11 @@ import id.primawash.api.branch.BranchService
 import id.primawash.api.common.SecureTokens
 import id.primawash.api.device.DeviceService
 import id.primawash.api.staff.StaffService
-import id.primawash.api.support.BINTARO
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.FIXED_CLOCK
+import id.primawash.api.support.NAROGONG
 import id.primawash.api.support.NOW
-import id.primawash.api.support.TEBET
 import id.primawash.api.support.principal
 import id.primawash.api.support.recordingAudit
 import id.primawash.api.support.staffRecord
@@ -43,7 +43,7 @@ class StaffProofTest {
     private val siti = principal(staffRecord("Siti Nurhaliza"))
     private val proof = "sp_bukti-verify-pin"
     private val valid =
-        StaffProofRecord(UUID.randomUUID(), bagas.id, siti.deviceId, TEBET.id, NOW.plusSeconds(60), null)
+        StaffProofRecord(UUID.randomUUID(), bagas.id, siti.deviceId, FAMILIA_URBAN.id, NOW.plusSeconds(60), null)
 
     init {
         every { staff.find(bagas.id) } returns bagas
@@ -66,7 +66,7 @@ class StaffProofTest {
         spend(valid.copy(usedAt = NOW.minusSeconds(5))) shouldBe false
         spend(valid.copy(expiresAt = NOW)) shouldBe false
         spend(valid.copy(deviceId = UUID.randomUUID())) shouldBe false
-        spend(valid.copy(branchId = BINTARO.id)) shouldBe false
+        spend(valid.copy(branchId = NAROGONG.id)) shouldBe false
         service.consumeStaffProof(siti, null) shouldBe null
         service.consumeStaffProof(siti, "rt_bukan-proof") shouldBe null
 
@@ -78,7 +78,7 @@ class StaffProofTest {
         every { staff.find(bagas.id) } returns bagas.copy(active = false)
         spend(valid) shouldBe false
 
-        every { staff.find(bagas.id) } returns bagas.copy(branchId = BINTARO.id)
+        every { staff.find(bagas.id) } returns bagas.copy(branchId = NAROGONG.id)
         spend(valid) shouldBe false
 
         verify(exactly = 0) { repository.markStaffProofUsed(any(), any()) }

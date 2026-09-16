@@ -47,13 +47,13 @@ class ApiGuardsTest {
     fun `should cap pin attempts from one address even with a new installation id each time`() =
         apiTest { api ->
             repeat(PIN_LOGINS_PER_ADDRESS) {
-                api.pinLogin(ApiTestSupport.newDevice(), "TBT", "0000").status shouldBe
+                api.pinLogin(ApiTestSupport.newDevice(), "FMU", "0000").status shouldBe
                     HttpStatusCode.UnprocessableEntity
             }
             api
                 .pinLogin(
                     ApiTestSupport.newDevice(),
-                    "TBT",
+                    "FMU",
                     "9090",
                 ).shouldFailWith(HttpStatusCode.TooManyRequests, "RATE_LIMITED")
         }
@@ -61,7 +61,7 @@ class ApiGuardsTest {
     @Test
     fun `should refuse a device id header that does not belong to the session`() =
         apiTest { api ->
-            val siti = api.login(ApiTestSupport.newDevice(), "TBT", "1234").string("accessToken")
+            val siti = api.login(ApiTestSupport.newDevice(), "FMU", "1234").string("accessToken")
             api
                 .get("/me", token = siti, deviceId = ApiTestSupport.newDevice())
                 .shouldFailWith(HttpStatusCode.Unauthorized, "UNAUTHENTICATED")

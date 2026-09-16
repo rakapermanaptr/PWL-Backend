@@ -33,7 +33,7 @@ class DeltaSyncFlowTest {
     @Test
     fun `should start a tablet with everything it caches and never pin data`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val order = api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "2", 10_000))
 
@@ -62,8 +62,8 @@ class DeltaSyncFlowTest {
     @Test
     fun `should send only what changed since the cursor, in the scope of the session`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val nia = api.till("BTR", "2468")
+            val siti = api.till("FMU", "1234")
+            val nia = api.till("NRG", "2468")
             val owner = api.ownerToken()
             val ownerTill = Till(owner, "")
             // Logins write staff rows; the cursors are taken after every tablet is signed in.
@@ -77,8 +77,8 @@ class DeltaSyncFlowTest {
 
             val sitiShift = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             val niaShift = api.openShift(nia, "Nia Ramadhani", "2468").string("id")
-            val tebetOrder = api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "1", 10_000)).string("id")
-            val bintaroOrder = api.walkIn(nia, Line(Tx.serviceId("Cuci Setrika"), "1", 10_000)).string("id")
+            val familiaUrbanOrder = api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "1", 10_000)).string("id")
+            val narogongOrder = api.walkIn(nia, Line(Tx.serviceId("Cuci Setrika"), "1", 10_000)).string("id")
             val dewi = api.registerCustomer(nia, "Dewi Anggraini", "0812-3390-4471", optIn = false)
             val bedCover = Tx.serviceId("Bed Cover")
             api
@@ -95,8 +95,8 @@ class DeltaSyncFlowTest {
                 .long("price") shouldBe 40_000
             feed.ids("customers") shouldContainExactly listOf(dewi)
             // Orders follow the tablet's branch; a cashier's shifts are their branch's only.
-            feed.ids("orders") shouldContainExactly listOf(tebetOrder)
-            feed.ids("orders") shouldNotContain bintaroOrder
+            feed.ids("orders") shouldContainExactly listOf(familiaUrbanOrder)
+            feed.ids("orders") shouldNotContain narogongOrder
             feed.ids("shifts") shouldContainExactly listOf(sitiShift)
 
             val ownerFeed = api.changes(ownerTill, ownerCursor).obj("changes")
@@ -111,7 +111,7 @@ class DeltaSyncFlowTest {
     @Test
     fun `should deliver a change whose transaction commits after the cursor was handed out`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val cursor = api.get("/sync/bootstrap", siti.token).json().string("cursor")
             val bedCover = Tx.serviceId("Bed Cover")
 
@@ -134,15 +134,15 @@ class DeltaSyncFlowTest {
     @Test
     fun `should page a large feed and resume exactly after the last row served`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val cursor = api.get("/sync/bootstrap", siti.token).json().string("cursor")
-            val tebet = ApiTestSupport.branchId("TBT")
+            val familiaUrban = ApiTestSupport.branchId("FMU")
             PostgresSupport.withConnection { connection ->
                 connection.createStatement().use {
                     it.execute(
                         "INSERT INTO customers (name, phone, phone_digits, home_branch_id) " +
                             "SELECT 'Customer ' || n, '0812-0000-' || lpad(n::text, 4, '0'), " +
-                            "'08120000' || lpad(n::text, 4, '0'), '$tebet' FROM generate_series(1, 620) n",
+                            "'08120000' || lpad(n::text, 4, '0'), '$familiaUrban' FROM generate_series(1, 620) n",
                     )
                 }
             }
@@ -162,7 +162,7 @@ class DeltaSyncFlowTest {
     @Test
     fun `should refuse a cursor it did not issue`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
 
             api
                 .get(
@@ -175,7 +175,7 @@ class DeltaSyncFlowTest {
     @Test
     fun `should record the tablet heartbeat for the owner's pending sync count`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
 
             val beat =
                 api.post("/devices/heartbeat", """{"pendingCount":3,"appVersion":"1.4.1","online":true}""", siti.token)

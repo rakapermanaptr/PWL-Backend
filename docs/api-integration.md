@@ -118,9 +118,9 @@ X-App-Version: 1.4.0
   "branches": [
     {
       "id": "2368f351-ca2d-445d-92e8-c64e4d0ca8c6",
-      "code": "TBT",
-      "name": "Tebet",
-      "address": "Jl. Tebet Raya No. 42, Jakarta Selatan",
+      "code": "FMU",
+      "name": "Familia Urban",
+      "address": "Ruko Arundaya, Jl. Familia Urban Blok DD. 21",
       "hours": "07.00 – 21.00",
       "active": true,
       "cashierNames": ["Siti N.", "Bagas A."],
@@ -165,9 +165,9 @@ Content-Type: application/json
     },
     "branch": {
       "id": "2368f351-ca2d-445d-92e8-c64e4d0ca8c6",
-      "code": "TBT",
-      "name": "Tebet",
-      "address": "Jl. Tebet Raya No. 42, Jakarta Selatan",
+      "code": "FMU",
+      "name": "Familia Urban",
+      "address": "Ruko Arundaya, Jl. Familia Urban Blok DD. 21",
       "phone": "021-8290-1147",
       "hours": "07.00 – 21.00",
       "dailyTarget": 5200000,
@@ -536,7 +536,7 @@ dalam satu transaksi sehingga chart, baris cabang, dan ringkasan tidak pernah sa
   "readyForPickup": 12, "staleReady": 2,
   "optInRate": 0.82, "deliveryRate": null, "redemptionRate": 0.11, "pendingSync": 3,
   "branchRows": [
-    { "branchId": "…", "code": "TBT", "name": "Tebet", "active": true,
+    { "branchId": "…", "code": "FMU", "name": "Familia Urban", "active": true,
       "revenue": 2600000, "txCount": 21, "readyForPickup": 8,
       "dailyTarget": 5200000, "targetRatio": 0.5,
       "latestShift": { "id": "…", "open": true, "openedByName": "Siti Nurhaliza",
@@ -546,7 +546,7 @@ dalam satu transaksi sehingga chart, baris cabang, dan ringkasan tidak pernah sa
                "branches": [ { "branchId": "…", "revenue": 2100000 } ] } ],
   "topServices": [ { "name": "Cuci Setrika", "revenue": 105000, "share": 0.75 } ],
   "audit": [ { "id": 918, "branchId": "…", "staffId": "…", "actorName": "Siti N. (kasir)",
-               "actionType": "ORDER_CREATED", "action": "Buat order TBT-0915-001 — Rp45.000",
+               "actionType": "ORDER_CREATED", "action": "Buat order FMU-0915-001 — Rp45.000",
                "entityType": "order", "entityId": "…", "createdAt": "2026-09-15T02:10:04.000Z" } ],
   "auditTruncated": false
 }
@@ -601,10 +601,10 @@ docker compose up -d db
 | Staff | Role | Cabang | PIN |
 |---|---|---|---|
 | Raka Prasetyo | OWNER | semua | 9090 |
-| Siti Nurhaliza | KASIR | Tebet (TBT) | 1234 |
-| Bagas Ardhana | KASIR | Tebet (TBT) | 5678 |
-| Nia Ramadhani | KASIR | Bintaro (BTR) | 2468 |
-| Fajar Nugroho | KASIR | Bintaro (BTR) | 1357 |
+| Siti Nurhaliza | KASIR | Familia Urban (FMU) | 1234 |
+| Bagas Ardhana | KASIR | Familia Urban (FMU) | 5678 |
+| Nia Ramadhani | KASIR | Narogong (NRG) | 2468 |
+| Fajar Nugroho | KASIR | Narogong (NRG) | 1357 |
 | Wulan Sari | KASIR | Cipete (CPT) | 3690 |
 | Yuni Astari | KASIR (nonaktif) | Cipete (CPT) | 4321 |
 

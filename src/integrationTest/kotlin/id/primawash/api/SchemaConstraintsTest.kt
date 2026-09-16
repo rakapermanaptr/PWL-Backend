@@ -56,10 +56,10 @@ class SchemaConstraintsTest : SchemaTestBase() {
         PostgresSupport.withConnection { connection ->
             val clientTxId = "44444444-4444-4444-4444-444444444444"
             val shiftId = openShift(connection)
-            insertOrder(connection, shiftId, clientTxId, seq = 1, number = "TBT-0829-001")
+            insertOrder(connection, shiftId, clientTxId, seq = 1, number = "FMU-0829-001")
             val failure =
                 assertThrows<SQLException> {
-                    insertOrder(connection, shiftId, clientTxId, seq = 2, number = "TBT-0829-002")
+                    insertOrder(connection, shiftId, clientTxId, seq = 2, number = "FMU-0829-002")
                 }
             failure.message!! shouldContain "orders_client_tx_id_key"
         }
@@ -69,7 +69,7 @@ class SchemaConstraintsTest : SchemaTestBase() {
     fun `should reject two orders with the same sequence on the same business date`() {
         PostgresSupport.withConnection { connection ->
             val shiftId = openShift(connection)
-            insertOrder(connection, shiftId, "55555555-5555-5555-5555-555555555555", seq = 1, number = "TBT-0829-001")
+            insertOrder(connection, shiftId, "55555555-5555-5555-5555-555555555555", seq = 1, number = "FMU-0829-001")
             val failure =
                 assertThrows<SQLException> {
                     insertOrder(
@@ -77,7 +77,7 @@ class SchemaConstraintsTest : SchemaTestBase() {
                         shiftId,
                         "66666666-6666-6666-6666-666666666666",
                         seq = 1,
-                        number = "TBT-0829-009",
+                        number = "FMU-0829-009",
                     )
                 }
             failure.message!! shouldContain "orders_branch_date_seq_key"
@@ -95,7 +95,7 @@ class SchemaConstraintsTest : SchemaTestBase() {
                         shiftId,
                         "77777777-7777-7777-7777-777777777777",
                         seq = 3,
-                        number = "TBT-0829-003",
+                        number = "FMU-0829-003",
                         subtotal = 45_000,
                         discount = 10_000,
                         total = 45_000,

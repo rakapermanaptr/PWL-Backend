@@ -3,7 +3,7 @@ package id.primawash.api.staff
 import kotlinx.serialization.Serializable
 
 enum class Role(
-    /** Word used inside audit sentences: "(kasir, Cabang Tebet)". */
+    /** Word used inside audit sentences: "(kasir, Cabang Familia Urban)". */
     val auditLabel: String,
 ) {
     KASIR("kasir"),

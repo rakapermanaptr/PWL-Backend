@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 
 /** Orders online (PRD §8.6, §9.1, §9.2) — acceptance scenarios #1, #2, #3, #4 and #8 of §16. */
 class OrderFlowTest {
-    // 09.00 WIB on 15 September 2026: business date 2026-09-15, order numbers TBT-0915-…
+    // 09.00 WIB on 15 September 2026: business date 2026-09-15, order numbers FMU-0915-…
     private val clock = MutableClock()
 
     @BeforeEach
@@ -19,7 +19,7 @@ class OrderFlowTest {
     @Test
     fun `should record a paid order and every side effect in one go`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val shift = api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = true)
             Tx.givePoints(dewi, 2_340)
@@ -42,7 +42,7 @@ class OrderFlowTest {
             val body = response.json()
             val order = body.obj("order")
             val number = order.string("number")
-            number shouldBe "TBT-0915-001"
+            number shouldBe "FMU-0915-001"
             order.string("businessDate") shouldBe "2026-09-15"
             order.string("status") shouldBe "DITERIMA"
             order.string("waStatus") shouldBe "MENUNGGU"
@@ -100,27 +100,27 @@ class OrderFlowTest {
                 )
             second.status shouldBe HttpStatusCode.Created
             val secondOrder = second.json().obj("order")
-            secondOrder.string("number") shouldBe "TBT-0915-002"
+            secondOrder.string("number") shouldBe "FMU-0915-002"
             waTemplates(secondOrder.string("id")) shouldContainExactly listOf("STRUK_DIGITAL:QUEUED")
         }
 
     @Test
     fun `should reject an order when no shift is open`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val error =
                 api
                     .placeOrder(siti, Tx.orderBody(Tx.key(), emptyList(), 0))
                     .shouldFailWith(HttpStatusCode.UnprocessableEntity, "SHIFT_NOT_OPEN")
             error.string("message") shouldBe
-                "Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi."
+                "Shift Cabang Familia Urban belum dibuka — buka shift dulu sebelum mencatat transaksi."
             ApiTestSupport.count("SELECT count(*) FROM orders") shouldBe 0
         }
 
     @Test
     fun `should check the cart in the documented order and store nothing on failure`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = true)
             Tx.givePoints(dewi, 3_000)
@@ -201,7 +201,7 @@ class OrderFlowTest {
     @Test
     fun `should answer a changed price with the new price list and keep old orders at their price`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val before = api.walkIn(siti, Line(cuciSetrika, "2", 10_000))
 
@@ -235,7 +235,7 @@ class OrderFlowTest {
     @Test
     fun `should replay a retried order and never record a client transaction twice`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val clientTxId = Tx.key()
             val body = Tx.orderBody(clientTxId, listOf(Line(cuciSetrika, "3", 10_000)), 30_000)
@@ -255,7 +255,7 @@ class OrderFlowTest {
             // The same cart under a fresh key (the app lost the key): still one order, and the client learns which.
             val duplicate =
                 api.placeOrder(siti, body).shouldFailWith(HttpStatusCode.Conflict, "DUPLICATE_TRANSACTION")
-            duplicate.obj("details").obj("order").string("number") shouldBe "TBT-0915-001"
+            duplicate.obj("details").obj("order").string("number") shouldBe "FMU-0915-001"
             ApiTestSupport.count("SELECT count(*) FROM orders") shouldBe 1
             scalar("SELECT tx_count FROM shifts") shouldBe "1"
         }
@@ -263,7 +263,7 @@ class OrderFlowTest {
     @Test
     fun `should advance one step at a time and queue the ready message for an opted in customer`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = true)
             val order =
@@ -322,7 +322,7 @@ class OrderFlowTest {
     @Test
     fun `should read consent when the order becomes ready, not when it was paid`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = true)
             val order =
@@ -363,27 +363,27 @@ class OrderFlowTest {
     @Test
     fun `should keep a cashier inside the branch of the token`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val nia = api.till("BTR", "2468")
+            val siti = api.till("FMU", "1234")
+            val nia = api.till("NRG", "2468")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             api.openShift(nia, "Nia Ramadhani", "2468")
-            val tebetOrder = api.walkIn(siti, Line(cuciSetrika, "1", 10_000))
-            val bintaroOrder = api.walkIn(nia, Line(cuciSetrika, "2", 10_000))
-            bintaroOrder.string("number") shouldBe "BTR-0915-001"
+            val familiaUrbanOrder = api.walkIn(siti, Line(cuciSetrika, "1", 10_000))
+            val narogongOrder = api.walkIn(nia, Line(cuciSetrika, "2", 10_000))
+            narogongOrder.string("number") shouldBe "NRG-0915-001"
 
             api
                 .get(
-                    "/orders/${tebetOrder.string("id")}",
+                    "/orders/${familiaUrbanOrder.string("id")}",
                     nia.token,
                 ).shouldFailWith(HttpStatusCode.Forbidden, "BRANCH_SCOPE")
             api
                 .advance(
                     nia,
-                    tebetOrder.string("id"),
+                    familiaUrbanOrder.string("id"),
                     "DITERIMA",
                 ).shouldFailWith(HttpStatusCode.Forbidden, "BRANCH_SCOPE")
-            val niaList = api.get("/orders?branchId=${ApiTestSupport.branchId("TBT")}", nia.token).json()
-            niaList.array("items").objects().map { it.string("number") } shouldContainExactly listOf("BTR-0915-001")
+            val niaList = api.get("/orders?branchId=${ApiTestSupport.branchId("FMU")}", nia.token).json()
+            niaList.array("items").objects().map { it.string("number") } shouldContainExactly listOf("NRG-0915-001")
 
             val owner = api.ownerToken()
             api
@@ -392,21 +392,21 @@ class OrderFlowTest {
                 .array("items")
                 .size shouldBe 2
             api
-                .get("/orders?branchId=${ApiTestSupport.branchId("BTR")}", owner)
+                .get("/orders?branchId=${ApiTestSupport.branchId("NRG")}", owner)
                 .json()
                 .array("items")
                 .objects()
                 .single()
-                .string("number") shouldBe "BTR-0915-001"
+                .string("number") shouldBe "NRG-0915-001"
         }
 
     @Test
     fun `should list orders newest first with counts, search and pages`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api.openShift(siti, "Siti Nurhaliza", "1234")
             val dewi = api.registerCustomer(siti, "Dewi Anggraini", "0812-3390-4471", optIn = false)
-            api.get("/orders/next-number", siti.token).json().string("number") shouldBe "TBT-0915-001"
+            api.get("/orders/next-number", siti.token).json().string("number") shouldBe "FMU-0915-001"
 
             val first =
                 api
@@ -420,11 +420,11 @@ class OrderFlowTest {
             clock.advance(java.time.Duration.ofMinutes(1))
             api.walkIn(siti, Line(cuciSetrika, "3", 10_000))
             api.advance(siti, second.string("id"), "DITERIMA")
-            api.get("/orders/next-number", siti.token).json().string("number") shouldBe "TBT-0915-004"
+            api.get("/orders/next-number", siti.token).json().string("number") shouldBe "FMU-0915-004"
 
             val all = api.get("/orders", siti.token).json()
             all.array("items").objects().map { it.string("number") } shouldContainExactly
-                listOf("TBT-0915-003", "TBT-0915-002", "TBT-0915-001")
+                listOf("FMU-0915-003", "FMU-0915-002", "FMU-0915-001")
             all.obj("counts").let {
                 it.long("ALL") shouldBe 3
                 it.long("DITERIMA") shouldBe 2
@@ -465,7 +465,7 @@ class OrderFlowTest {
                 .array("items")
                 .objects()
                 .single()
-                .string("number") shouldBe "TBT-0915-001"
+                .string("number") shouldBe "FMU-0915-001"
             rest.isNull("nextCursor") shouldBe true
             api.get("/orders?cursor=rusak", siti.token).shouldFailWith(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
             api.get("/orders?from=15-09-2026", siti.token).shouldFailWith(HttpStatusCode.BadRequest, "VALIDATION_ERROR")
@@ -474,7 +474,7 @@ class OrderFlowTest {
     @Test
     fun `should require an idempotency key on a new order`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             api
                 .post("/orders", Tx.orderBody(Tx.key(), emptyList(), 0), siti.token)
                 .shouldFailWith(HttpStatusCode.BadRequest, "VALIDATION_ERROR")

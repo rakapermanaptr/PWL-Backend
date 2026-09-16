@@ -4,10 +4,10 @@ import id.primawash.api.common.AuditActionType
 import id.primawash.api.common.BusinessRuleException
 import id.primawash.api.common.ConflictException
 import id.primawash.api.support.DirectTransactionRunner
+import id.primawash.api.support.FAMILIA_URBAN
 import id.primawash.api.support.FIXED_CLOCK
 import id.primawash.api.support.NOW
 import id.primawash.api.support.OWNER_ACTOR
-import id.primawash.api.support.TEBET
 import id.primawash.api.support.recordingAudit
 import io.kotest.matchers.shouldBe
 import io.mockk.every
@@ -26,7 +26,16 @@ class CustomerServiceTest {
     private val service = CustomerService(DirectTransactionRunner, repository, audit.first, FIXED_CLOCK)
 
     private val dewi =
-        CustomerRecord(UUID.randomUUID(), "Dewi Anggraini", "0812-3390-4471", "081233904471", 2_340, true, 18, TEBET.id)
+        CustomerRecord(
+            UUID.randomUUID(),
+            "Dewi Anggraini",
+            "0812-3390-4471",
+            "081233904471",
+            2_340,
+            true,
+            18,
+            FAMILIA_URBAN.id,
+        )
 
     @Test
     fun `should check name, then phone format, then phone registration`() =
@@ -39,7 +48,7 @@ class CustomerServiceTest {
                     " ",
                     "081233904471",
                     true,
-                    TEBET.id,
+                    FAMILIA_URBAN.id,
                     OWNER_ACTOR,
                 )
             }.code shouldBe "NAME_REQUIRED"
@@ -50,7 +59,7 @@ class CustomerServiceTest {
                         "Bayu",
                         "0812-339",
                         false,
-                        TEBET.id,
+                        FAMILIA_URBAN.id,
                         OWNER_ACTOR,
                     )
                 }
@@ -62,7 +71,7 @@ class CustomerServiceTest {
                     "Bayu",
                     "0812 abc 4471",
                     false,
-                    TEBET.id,
+                    FAMILIA_URBAN.id,
                     OWNER_ACTOR,
                 )
             }.code shouldBe "PHONE_INVALID"
@@ -74,7 +83,7 @@ class CustomerServiceTest {
                         "Dewi",
                         "+62 812-3390-4471",
                         false,
-                        TEBET.id,
+                        FAMILIA_URBAN.id,
                         OWNER_ACTOR,
                     )
                 }
@@ -90,7 +99,7 @@ class CustomerServiceTest {
             every { repository.findByPhoneDigits(any()) } returns null
             every { repository.findById(any(), any()) } returns dewi
 
-            service.register(null, "Dewi Anggraini", "62 812 3390 4471", true, TEBET.id, OWNER_ACTOR)
+            service.register(null, "Dewi Anggraini", "62 812 3390 4471", true, FAMILIA_URBAN.id, OWNER_ACTOR)
 
             verify {
                 repository.insert(
@@ -99,7 +108,7 @@ class CustomerServiceTest {
                     "0812-3390-4471",
                     "081233904471",
                     true,
-                    TEBET.id,
+                    FAMILIA_URBAN.id,
                     any(),
                     NOW,
                 )
@@ -113,7 +122,7 @@ class CustomerServiceTest {
             every { repository.findById(dewi.id, any()) } returns dewi
             every { repository.cancelQueuedWhatsApp(dewi.id, any()) } returns 1
 
-            val result = service.update(dewi.id, null, false, TEBET.id, OWNER_ACTOR)
+            val result = service.update(dewi.id, null, false, FAMILIA_URBAN.id, OWNER_ACTOR)
 
             result.changed shouldBe true
             verify { repository.updateOptIn(dewi.id, false, NOW) }
@@ -130,13 +139,13 @@ class CustomerServiceTest {
                     dewi.id,
                     "  ",
                     null,
-                    TEBET.id,
+                    FAMILIA_URBAN.id,
                     OWNER_ACTOR,
                 )
             }.code shouldBe
                 "NAME_REQUIRED"
 
-            service.update(dewi.id, "Dewi Anggraini", true, TEBET.id, OWNER_ACTOR).changed shouldBe false
+            service.update(dewi.id, "Dewi Anggraini", true, FAMILIA_URBAN.id, OWNER_ACTOR).changed shouldBe false
             verify(exactly = 0) { repository.cancelQueuedWhatsApp(any(), any()) }
         }
 }

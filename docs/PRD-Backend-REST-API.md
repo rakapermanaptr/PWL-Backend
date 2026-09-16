@@ -56,13 +56,13 @@ Sumber: `domain/model/*.kt` dan `data/local/entity/Entities.kt`.
 
 | Entitas | Field penting | Catatan |
 |---|---|---|
-| `Branch` | `id, code (TBT/BTR/CPT), name, address, phone, hours, dailyTarget, active` | Order, kas, shift, audit milik satu cabang |
+| `Branch` | `id, code (FMU/NRG/CPT), name, address, phone, hours, dailyTarget, active` | Order, kas, shift, audit milik satu cabang |
 | `Staff` | `id, name, shortName, role (KASIR/OWNER), branchId?, pinHash, active, lastLoginAt` | Kasir terikat 1 cabang; owner `branchId = null` |
 | `Customer` | `id, name, phone, points, optIn, visits, homeBranchId` | Global lintas cabang, no HP unik, poin berlaku di semua cabang |
 | `ServiceItem` | `id, category, name, price, unit, step, active` | Price list global; `step` 0,5 untuk kg, 1 untuk lainnya |
 | `LoyaltyRate` | `rupiahPerStep, pointsPerStep` | Default Rp10.000 = 100 poin, berlaku semua cabang |
 | `Reward` | `id, name, cost (poin), value (Rp), note, usedCount, active` | Diskon rupiah saat redeem |
-| `Order` + `OrderItem` | `id (TBT-0829-015), items (snapshot nama/harga/unit), subtotal, discount, total, reward, redeemed/earnedPoints, payment, status, waStatus, createdAt, statusChangedAt, staffId` | Harga di-snapshot saat transaksi |
+| `Order` + `OrderItem` | `id (FMU-0829-015), items (snapshot nama/harga/unit), subtotal, discount, total, reward, redeemed/earnedPoints, payment, status, waStatus, createdAt, statusChangedAt, staffId` | Harga di-snapshot saat transaksi |
 | `order_events` | `orderId, branchId, type, createdAt` | Event layer P0 #3 |
 | `Shift` + `CashEntry` | `openedByName, openedAt, closedAt, cashSales, transferSales, txCount, pointsIssued, countedCash, recap` / `kind (OPENING/CASH_IN/CASH_OUT/SALE), amount (bertanda)` | Satu shift terbuka per cabang |
 | `AuditEntry` | `branchId?, createdAt, actor ("Siti N. (kasir)"), action (teks)` | Append-only |
@@ -79,7 +79,7 @@ Temuan ini berasal dari membaca kode, bukan dari PRD produk. Masing-masing punya
 | T1 | PIN di-hash **SHA-256 dengan salt statis** (`"primawash:$pin"`). Ruang PIN 4 digit = 10.000 kombinasi → hash bisa dibalik dalam milidetik. | Kebocoran DB = semua PIN bocor | §12.2: HMAC + pepper untuk lookup, Argon2id untuk verifikasi, rate limit per tablet, per akun & per alamat jaringan |
 | T2 | Login **hanya dengan PIN** (tanpa pilih nama), jadi PIN harus unik di antara staff aktif. `ToggleStaffActiveUseCase` **tidak** mengecek bentrok PIN saat mengaktifkan ulang akun. | Dua staff aktif bisa punya PIN sama → login ambigu | §8.3: aktivasi ulang ditolak bila PIN bentrok; unique index parsial |
 | T3 | `matchesActivePin()` dipakai keypad login untuk submit otomatis. Kalau diekspos sebagai API, ini jadi **oracle tebak PIN**. | Brute force tanpa login gagal tercatat | §8.1 & §14 (A5): endpoint ini tidak disediakan |
-| T4 | Format ID order `KODE-MMdd-SEQ` **tanpa tahun** → `TBT-0829-015` tahun 2026 bentrok dengan 2027. | Primary key bentrok setelah 1 tahun | §7.3: `id` UUID + `number` tampilan, unik per (cabang, tanggal bisnis) |
+| T4 | Format ID order `KODE-MMdd-SEQ` **tanpa tahun** → `FMU-0829-015` tahun 2026 bentrok dengan 2027. | Primary key bentrok setelah 1 tahun | §7.3: `id` UUID + `number` tampilan, unik per (cabang, tanggal bisnis) |
 | T5 | Sync offline memanggil ulang `PlaceOrderUseCase` yang **mewajibkan shift terbuka saat sync**, memakai **rate poin saat sync**, dan **berhenti di transaksi pertama yang gagal**. | Transaksi yang sudah dibayar bisa tertahan selamanya; poin dihitung dengan rate yang salah | §11: shift & rate mengikuti waktu transaksi, hasil per transaksi |
 | T6 | Status WA di-set `TERKIRIM` **seketika** saat status order jadi "siap diambil" dan saat kirim ulang — belum ada pengiriman nyata. | Delivery rate di laporan tidak jujur | §10: outbox + worker + webhook status Meta |
 | T7 | Keputusan kirim WA "siap diambil" memakai `order.waStatus` yang di-stamp saat transaksi. Customer yang opt-in belakangan tidak pernah dapat notifikasi. | Opt-in baru tidak berefek ke order berjalan | §8.6: cek opt-in customer saat event terjadi |
@@ -220,7 +220,7 @@ agar UX tidak berubah.
 {
   "error": {
     "code": "SHIFT_NOT_OPEN",
-    "message": "Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi.",
+    "message": "Shift Cabang Familia Urban belum dibuka — buka shift dulu sebelum mencatat transaksi.",
     "details": { "branchId": "7f1c…" },
     "requestId": "req_01J9…"
   }
@@ -266,7 +266,7 @@ Semua tabel punya `created_at`, `updated_at` (UTC) kecuali disebut lain. Uang = 
 | Kolom | Tipe | Aturan |
 |---|---|---|
 | id | uuid PK | |
-| code | varchar(5) | unik, huruf besar (TBT, BTR, CPT) — dipakai di nomor order & impor CSV |
+| code | varchar(5) | unik, huruf besar (FMU, NRG, CPT) — dipakai di nomor order & impor CSV |
 | name, address, phone, hours | text | `hours` teks bebas "07.00 – 21.00" (ikut isi pesan WA) |
 | daily_target | bigint | > 0 |
 | active | bool | |
@@ -322,7 +322,7 @@ diubah — ini yang menjamin "rate baru hanya berlaku untuk transaksi berikutnya
 | Kolom | Tipe | Aturan |
 |---|---|---|
 | id | uuid PK | |
-| number | varchar(20) | "TBT-0829-015"; unik bersama `(branch_id, business_date)` |
+| number | varchar(20) | "FMU-0829-015"; unik bersama `(branch_id, business_date)` |
 | branch_id, business_date, seq | uuid, date, int | UNIQUE `(branch_id, business_date, seq)` |
 | client_tx_id | uuid | **UNIQUE** — kunci anti-duplikasi sync |
 | source | enum `ONLINE`,`OFFLINE_SYNC` | |
@@ -405,7 +405,7 @@ Unique index parsial `(order_id) WHERE template = 'REMINDER_3_HARI'` menjamin pe
 
 ### 7.3 Nomor order (T4)
 
-- Format tampilan tetap seperti desain: `{branch.code}-{MMdd}-{seq 3 digit}` → `TBT-0829-015`.
+- Format tampilan tetap seperti desain: `{branch.code}-{MMdd}-{seq 3 digit}` → `FMU-0829-015`.
 - `MMdd` = tanggal bisnis WIB dari `captured_at` (transaksi offline memakai hari transaksinya, sama seperti
   `NextOrderIdUseCase.forTime`).
 - `seq` diambil dari `order_number_counters` secara atomik di transaksi yang sama → tidak ada lompatan akibat race.
@@ -450,7 +450,7 @@ menebak PIN tanpa tercatat sebagai login gagal (T3).
   "refreshToken": "rt_…", "refreshTokenExpiresIn": 64800,
   "context": {
     "staff":  { "id": "u1…", "name": "Siti Nurhaliza", "shortName": "Siti N.", "role": "KASIR", "branchId": "b1…", "active": true, "lastLoginAt": "…" },
-    "branch": { "id": "b1…", "code": "TBT", "name": "Tebet", "address": "…", "phone": "…", "hours": "07.00 – 21.00", "dailyTarget": 5200000, "active": true }
+    "branch": { "id": "b1…", "code": "FMU", "name": "Familia Urban", "address": "…", "phone": "…", "hours": "07.00 – 21.00", "dailyTarget": 5200000, "active": true }
   }
 }
 ```
@@ -480,8 +480,8 @@ percobaan per alamat jaringan per 5 menit (`429`).
 - `STAFF_WRONG_BRANCH` menyebut nama pemilik PIN seperti klien sekarang.
 
 Efek: `staff.last_login_at`, sesi baru (sesi lain di tablet yang sama berakhir), `devices.last_branch_id`, audit
-`"Login PIN sebagai kasir Tebet di perangkat Cabang Tebet"` / `"… sebagai owner/admin …"`, dan pada login pertama
-sebuah tablet audit `DEVICE_ACTIVATED` `"Tablet baru dipakai login pertama kali di Cabang Tebet"`.
+`"Login PIN sebagai kasir Familia Urban di perangkat Cabang Familia Urban"` / `"… sebagai owner/admin …"`, dan pada login pertama
+sebuah tablet audit `DEVICE_ACTIVATED` `"Tablet baru dipakai login pertama kali di Cabang Familia Urban"`.
 
 #### `POST /auth/verify-pin` → dipakai layar Kas sebelum buka shift
 
@@ -500,7 +500,7 @@ ke tablet & cabang sesi, sekali pakai, berlaku 5 menit — dipakai `POST /shifts
 #### `POST /auth/switch-staff`
 
 Body `{ "staffId", "pin" }` → validasi seperti `verify-pin`, lalu menerbitkan token untuk staff tsb di cabang yang
-sama, audit `"Login PIN sebagai {kasir Tebet | owner/admin}"`. Klien menerima `context` baru; jika staff baru kasir,
+sama, audit `"Login PIN sebagai {kasir Familia Urban | owner/admin}"`. Klien menerima `context` baru; jika staff baru kasir,
 klien keluar dari layar owner (`ShellEffect.CashierTookOver`). Respons sama dengan `pin-login`. `switch-staff` tidak
 menolak cabang nonaktif (hanya login & buka shift yang ditolak, §8.2), agar serah terima di shift yang sedang
 diselesaikan tetap bisa.
@@ -533,7 +533,7 @@ refreshTokenExpiresIn, context }`; token `null` bila cabang sama (`changed: fals
 {
   "lastBranchId": "b1…",
   "branches": [
-    { "id": "b1…", "code": "TBT", "name": "Tebet", "address": "…", "hours": "07.00 – 21.00", "active": true,
+    { "id": "b1…", "code": "FMU", "name": "Familia Urban", "address": "…", "hours": "07.00 – 21.00", "active": true,
       "cashierNames": ["Siti N.", "Bagas A."], "shift": { "open": true, "openedByName": "Siti Nurhaliza" } }
   ]
 }
@@ -579,7 +579,7 @@ Hanya menampilkan nama pendek kasir aktif — **tidak pernah** mengirim hash PIN
 | PIN tidak dipakai staff aktif lain | PIN ini sudah dipakai staff lain — pilih kombinasi lain. |
 | Kasir wajib punya cabang; owner selalu `branchId = null` | Kasir harus ditempatkan di satu cabang. |
 
-`shortName` diturunkan server. Audit `"Tambah akun staff {nama} (kasir, Cabang Tebet) · PIN dibuat"`.
+`shortName` diturunkan server. Audit `"Tambah akun staff {nama} (kasir, Cabang Familia Urban) · PIN dibuat"`.
 
 `POST /staff/{id}/reset-pin` → `{ "staff": {…}, "pin": "4821" }`. PIN 4 digit acak yang tidak bentrok dengan
 **semua** akun; PIN lama langsung tidak berlaku dan semua sesi staff tsb dicabut. Respons tidak boleh di-cache atau
@@ -710,7 +710,7 @@ createdAt }], nextCursor }`.
 // 201
 {
   "order": {
-    "id": "9b2e…", "number": "TBT-0829-015", "branchId": "b1…", "businessDate": "2026-08-29",
+    "id": "9b2e…", "number": "FMU-0829-015", "branchId": "b1…", "businessDate": "2026-08-29",
     "customerId": "c1…", "customerName": "Dewi Anggraini", "customerPhone": "0812-3390-4471",
     "items": [ { "serviceId": "cs…", "name": "Cuci Setrika", "qty": 4.5, "unit": "kg", "unitPrice": 10000, "subtotal": 45000 } ],
     "note": "Pisahkan baju putih",
@@ -1183,7 +1183,7 @@ diajukan sejak M0 sebagai jalur paralel karena butuh waktu di sisi Meta.
 
 | # | Given | When | Then |
 |---|---|---|---|
-| 1 | Shift Tebet terbuka, customer Dewi 2.340 poin, rate Rp10.000 = 100 | Kasir menyimpan Cuci Setrika 4,5 kg, Tunai, redeem 1.500 poin | Order `TBT-MMdd-seq` status `DITERIMA`, total Rp31.000, +300 poin, saldo 1.140, kas `SALE` Rp31.000, `cash_sales` +31.000, audit tercatat, outbox `struk_digital` |
+| 1 | Shift Familia Urban terbuka, customer Dewi 2.340 poin, rate Rp10.000 = 100 | Kasir menyimpan Cuci Setrika 4,5 kg, Tunai, redeem 1.500 poin | Order `FMU-MMdd-seq` status `DITERIMA`, total Rp31.000, +300 poin, saldo 1.140, kas `SALE` Rp31.000, `cash_sales` +31.000, audit tercatat, outbox `struk_digital` |
 | 2 | Tidak ada shift terbuka | `POST /orders` | 422 `SHIFT_NOT_OPEN` dengan pesan cabang |
 | 3 | Request order yang sama dikirim 2× (retry jaringan) | Idempotency-Key sama | Hanya 1 order; respons kedua identik |
 | 4 | Owner mengubah harga Cuci Setrika jadi Rp11.000 | Kasir mengirim order dengan `unitPrice` 10.000 | 409 `PRICE_CHANGED` berisi harga terbaru; order lama tetap Rp10.000 |
@@ -1194,7 +1194,7 @@ diajukan sejak M0 sebagai jalur paralel karena butuh waktu di sisi Meta.
 | 9 | Dua tablet memajukan order yang sama bersamaan | Keduanya kirim `fromStatus = PROSES` | Satu sukses, satu 409 `STATUS_CHANGED` |
 | 10 | Dua tablet membuka shift cabang yang sama bersamaan | `POST /shifts` | Satu sukses, satu 409 `SHIFT_ALREADY_OPEN` |
 | 11 | Modal Rp500.000, tunai Rp2.242.000, kas keluar Rp1.180.000, kas masuk Rp62.000, hitungan Rp1.624.000 | Tutup shift | expected Rp1.624.000, diff 0, audit "kas cocok" |
-| 12 | Kasir Tebet | Login PIN di perangkat Bintaro | 422 `STAFF_WRONG_BRANCH`, PIN dikosongkan |
+| 12 | Kasir Familia Urban | Login PIN di perangkat Narogong | 422 `STAFF_WRONG_BRANCH`, PIN dikosongkan |
 | 13 | Owner reset PIN Bagas | Bagas login dengan PIN lama | Ditolak; sesi Bagas yang aktif ikut dicabut |
 | 14 | 5 PIN salah dari satu perangkat | Percobaan ke-6 | 423 `PIN_LOCKED` + `Retry-After` |
 | 15 | Yuni nonaktif dan PIN-nya kini dipakai staff aktif | Owner mengaktifkan Yuni | 409 `PIN_CONFLICT` |
@@ -1202,7 +1202,7 @@ diajukan sejak M0 sebagai jalur paralel karena butuh waktu di sisi Meta.
 | 17 | Customer membalas "STOP" | Webhook diterima | `opt_in = false`, pesan antre dibatalkan, audit tercatat |
 | 18 | Nomor customer tidak terdaftar di WA | Worker mengirim | `FAILED` tanpa retry, muncul di `/wa/failures` cabang tsb dengan alasan Bahasa Indonesia |
 | 19 | Kasir | `GET /reports/dashboard` | 403 |
-| 20 | Owner memilih audit "7 hari" cabang Tebet | `GET /audit?branchId=…&from=…` | Entri Tebet + entri semua cabang (`branchId = null`), terbaru dulu, bisa difilter per staff |
+| 20 | Owner memilih audit "7 hari" cabang Familia Urban | `GET /audit?branchId=…&from=…` | Entri Familia Urban + entri semua cabang (`branchId = null`), terbaru dulu, bisa difilter per staff |
 
 ---
 
@@ -1210,7 +1210,7 @@ diajukan sejak M0 sebagai jalur paralel karena butuh waktu di sisi Meta.
 
 | # | Pertanyaan | Rekomendasi | Pemutus |
 |---|---|---|---|
-| Q1 | Format nomor order tanpa tahun (T4) | `id` UUID + `number` tetap `TBT-0829-015`, unik per (cabang, tanggal) | Owner + Android |
+| Q1 | Format nomor order tanpa tahun (T4) | `id` UUID + `number` tetap `FMU-0829-015`, unik per (cabang, tanggal) | Owner + Android |
 | Q2 | Login saat perangkat offline di awal hari | Pilot: login wajib online; sesi bertahan 18 jam sehingga putus koneksi di tengah hari tidak mengganggu. Login offline (cache verifier per perangkat) jadi P1 | Owner |
 | Q3 | Impor Excel `.xlsx` (PRD P0 #9 menyebut Excel/CSV; klien sekarang menolak Excel) | Server menerima `.xlsx` (sheet pertama, kolom sama) — tambahan kecil di backend, mengurangi langkah staff | Owner |
 | Q4 | Syarat minimum belanja reward (T9) | Tambah `minSubtotal` opsional, ditegakkan server | Owner |
@@ -1259,16 +1259,16 @@ diajukan sejak M0 sebagai jalur paralel karena butuh waktu di sisi Meta.
 | `PIN_CONFLICT` | 409 | PIN Yuni Astari sudah dipakai staff lain — reset PIN setelah akun diaktifkan. |
 | `PIN_LOCKED` | 423 | Terlalu banyak PIN salah. Coba lagi dalam 5 menit. |
 | `STAFF_INACTIVE` | 422 | Akun Yuni Astari nonaktif — PIN lama sudah diblokir. |
-| `STAFF_WRONG_BRANCH` | 422 | Siti Nurhaliza terdaftar di Cabang Tebet — tidak bisa login di perangkat Cabang Bintaro. |
+| `STAFF_WRONG_BRANCH` | 422 | Siti Nurhaliza terdaftar di Cabang Familia Urban — tidak bisa login di perangkat Cabang Narogong. |
 | `STAFF_SELF_DEACTIVATE` | 422 | Tidak bisa menonaktifkan akun yang sedang dipakai. |
 | `LAST_OWNER` | 422 | Minimal harus ada satu owner aktif. |
 | `CASHIER_NEEDS_BRANCH` | 422 | Kasir harus ditempatkan di satu cabang. |
 | `OWNER_ONLY` | 403 | Hanya owner/admin yang bisa memindahkan perangkat ke cabang lain. |
 | `STAFF_REQUIRED` | 422 | Pilih staff dulu. |
 | `STAFF_PROOF_INVALID` | 422 | Verifikasi PIN sudah kedaluwarsa — pilih staff dan masukkan PIN lagi. |
-| `SHIFT_NOT_OPEN` | 422 | Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi. |
-| `SHIFT_ALREADY_OPEN` | 409 | Shift Cabang Tebet masih terbuka — tutup dulu sebelum membuka yang baru. |
-| `SHIFT_CLOSED` | 409 | Shift Cabang Tebet sudah ditutup. |
+| `SHIFT_NOT_OPEN` | 422 | Shift Cabang Familia Urban belum dibuka — buka shift dulu sebelum mencatat transaksi. |
+| `SHIFT_ALREADY_OPEN` | 409 | Shift Cabang Familia Urban masih terbuka — tutup dulu sebelum membuka yang baru. |
+| `SHIFT_CLOSED` | 409 | Shift Cabang Familia Urban sudah ditutup. |
 | `OPENING_CASH_REQUIRED` | 422 | Modal awal belum diisi. |
 | `CASH_LABEL_REQUIRED` | 422 | Keterangan wajib diisi untuk audit trail. |
 | `AMOUNT_REQUIRED` | 422 | Jumlah belum diisi. |
@@ -1280,7 +1280,7 @@ diajukan sejak M0 sebagai jalur paralel karena butuh waktu di sisi Meta.
 | `REWARD_NOT_ELIGIBLE` | 422 | Reward ini butuh minimum belanja Rp75.000. |
 | `REDEEM_OFFLINE` | 422 | Redeem poin butuh koneksi — batalkan redemption atau tunggu online. |
 | `CAPTURED_IN_FUTURE` | 422 | Waktu transaksi di tablet lebih maju dari jam server — cek jam tablet lalu sync ulang. |
-| `DUPLICATE_TRANSACTION` | 409 | Transaksi ini sudah tersimpan sebagai TBT-0915-001 — muat ulang daftar order. |
+| `DUPLICATE_TRANSACTION` | 409 | Transaksi ini sudah tersimpan sebagai FMU-0915-001 — muat ulang daftar order. |
 | `STATUS_CHANGED` | 409 | Status order sudah diubah dari perangkat lain. |
 | `PHONE_INVALID` | 422 | Nomor WhatsApp belum valid (minimal 10 digit, diawali 08). |
 | `PHONE_ALREADY_REGISTERED` | 409 | Nomor ini sudah terdaftar (bisa dari cabang lain) — pakai pencarian untuk memilihnya. |
@@ -1308,7 +1308,7 @@ sampai owner mengaktifkan cabang.".
 | `VALIDATION_ERROR` | 400 | Data yang dikirim tidak lengkap atau formatnya salah. (atau pesan spesifik: "Parameter limit harus angka 1–100.", "Cursor tidak valid — muat ulang daftar dari awal.", "Format tanggal harus YYYY-MM-DD.", "Maksimal 50 transaksi per sync.", "Hitungan uang fisik tidak boleh negatif.", "ID customer dari perangkat sudah dipakai customer lain.") |
 | `UNAUTHENTICATED`, `TOKEN_EXPIRED` | 401 | Sesi berakhir — silakan login ulang dengan PIN. |
 | `FORBIDDEN` | 403 | Fitur ini hanya untuk owner/admin. |
-| `BRANCH_SCOPE` | 403 | Kasir hanya bisa mengakses data Cabang Tebet. |
+| `BRANCH_SCOPE` | 403 | Kasir hanya bisa mengakses data Cabang Familia Urban. |
 | `NOT_FOUND` | 404 | Cabang / Akun / Layanan / Reward / Perangkat / Customer / Order / Shift tidak ditemukan. · Rate poin belum diatur. |
 | `IDEMPOTENCY_MISMATCH` | 409 | Permintaan ini memakai Idempotency-Key yang sudah dipakai untuk data lain — buat kunci baru lalu kirim ulang. |
 | `APP_UPDATE_REQUIRED` | 426 | Versi aplikasi Prima Wash sudah terlalu lama — perbarui aplikasi dulu sebelum melanjutkan. (`details.minAppVersion`) |
@@ -1334,9 +1334,9 @@ Diambil dari `data/seed/DatabaseSeeder.kt`. Hanya master data yang dibawa ke ser
 
 | Kode | Nama | Alamat | Telepon | Jam | Target harian |
 |---|---|---|---|---|---|
-| TBT | Tebet | Jl. Tebet Raya No. 42, Jakarta Selatan | 021-8290-1147 | 07.00 – 21.00 | Rp5.200.000 |
-| BTR | Bintaro | Jl. Bintaro Utama Sektor 3A No. 9, Tangsel | 021-7345-6620 | 07.00 – 21.00 | Rp3.400.000 |
-| CPT | Cipete | Jl. Cipete Raya No. 18B, Jakarta Selatan | 021-7690-4432 | 08.00 – 20.00 | Rp2.300.000 |
+| FMU | Familia Urban | Ruko Arundaya, Jl. Familia Urban Blok DD. 21 | 021-8290-1147 | 07.00 – 21.00 | Rp5.200.000 |
+| NRG | Narogong | Jl. Narogong Indah No.12 Blok C 8, RT.005/RW.012 | 021-7345-6620 | 07.00 – 21.00 | Rp3.400.000 |
+| CPT | Cipete | Jl. Cipete Raya No.18-19, RT.8/RW.4 | 021-7690-4432 | 08.00 – 20.00 | Rp2.300.000 |
 
 **Price list**
 
@@ -1362,8 +1362,8 @@ Diambil dari `data/seed/DatabaseSeeder.kt`. Hanya master data yang dibawa ke ser
 **Reward:** Diskon Rp10.000 (1.000 poin, nilai Rp10.000) · Gratis Cuci Kering 2 kg (1.500 poin, Rp14.000) · Diskon
 Rp25.000 (2.500 poin, Rp25.000, minimum belanja Rp75.000). **Rate:** Rp10.000 = 100 poin.
 
-**Staff:** Raka Prasetyo (owner, semua cabang) · Siti Nurhaliza, Bagas Ardhana (kasir Tebet) · Nia Ramadhani, Fajar
-Nugroho (kasir Bintaro) · Wulan Sari, Yuni Astari *(nonaktif)* (kasir Cipete).
+**Staff:** Raka Prasetyo (owner, semua cabang) · Siti Nurhaliza, Bagas Ardhana (kasir Familia Urban) · Nia Ramadhani, Fajar
+Nugroho (kasir Narogong) · Wulan Sari, Yuni Astari *(nonaktif)* (kasir Cipete).
 
 ## Lampiran E — Pemetaan use case klien → endpoint
 

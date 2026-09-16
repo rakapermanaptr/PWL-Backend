@@ -271,7 +271,7 @@ kosong, itu bug.
 | Waktu | ISO-8601 UTC dengan milidetik — `2026-08-29T04:24:00.000Z` |
 | Tanggal bisnis | `YYYY-MM-DD` zona **Asia/Jakarta** — dipakai untuk omzet harian, nomor order, "hari ini" |
 | Uang | Integer rupiah (`Long`): `45000`. Kuantitas `NUMERIC(7,1)`: `4.5` |
-| ID | UUID; nomor order tampilan di field terpisah `number` (`TBT-0829-015`) |
+| ID | UUID; nomor order tampilan di field terpisah `number` (`FMU-0829-015`) |
 | Paginasi | Cursor — `?limit=50&cursor=<opaque>` → `{ "items": [...], "nextCursor": … }` |
 | Idempotensi | Header `Idempotency-Key` **wajib** di `POST /orders`, `/orders/sync`, `/shifts`, `/shifts/{id}/cash-entries`, `/shifts/{id}/close` |
 | Konkurensi | Resource yang bisa diubah dua perangkat membawa `version` / `fromStatus` → `409` bila berubah |
@@ -285,7 +285,7 @@ ditampilkan ke kasir apa adanya**:
 {
   "error": {
     "code": "SHIFT_NOT_OPEN",
-    "message": "Shift Cabang Tebet belum dibuka — buka shift dulu sebelum mencatat transaksi.",
+    "message": "Shift Cabang Familia Urban belum dibuka — buka shift dulu sebelum mencatat transaksi.",
     "details": { "branchId": "7f1c…" },
     "requestId": "req_01J9…"
   }

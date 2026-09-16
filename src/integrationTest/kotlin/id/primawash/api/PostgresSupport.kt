@@ -65,7 +65,7 @@ object PostgresSupport {
                 statement.execute(
                     """
                     INSERT INTO branches (id, code, name, daily_target)
-                    VALUES ('11111111-1111-1111-1111-111111111111', 'TBT', 'Tebet', 5200000);
+                    VALUES ('11111111-1111-1111-1111-111111111111', 'FMU', 'Familia Urban', 5200000);
 
                     INSERT INTO staff (id, name, short_name, role, branch_id, pin_lookup, pin_hash)
                     VALUES ('22222222-2222-2222-2222-222222222222', 'Siti Nurhaliza', 'Siti N.', 'KASIR',

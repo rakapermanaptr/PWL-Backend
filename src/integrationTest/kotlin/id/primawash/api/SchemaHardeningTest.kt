@@ -31,7 +31,7 @@ class SchemaHardeningTest : SchemaTestBase() {
                         connection,
                         "INSERT INTO orders (number, branch_id, business_date, seq, client_tx_id, customer_name, " +
                             "subtotal, total, loyalty_rate_id, payment, shift_id, staff_id, captured_at) " +
-                            "VALUES ('TBT-0829-001', '${fixtures.branchId}', DATE '2026-08-29', 1, " +
+                            "VALUES ('FMU-0829-001', '${fixtures.branchId}', DATE '2026-08-29', 1, " +
                             "gen_random_uuid(), 'Tanpa nama', 45000, 45000, '${fixtures.rateId}', 'TUNAI', " +
                             "'$shiftId', '${fixtures.staffId}', now())",
                     )
@@ -43,7 +43,7 @@ class SchemaHardeningTest : SchemaTestBase() {
     @Test
     fun `should reject a quantity that is not a multiple of the unit step`() {
         PostgresSupport.withConnection { connection ->
-            val orderId = insertOrder(connection, openShift(connection), CLIENT_TX_ID, seq = 1, number = "TBT-0829-001")
+            val orderId = insertOrder(connection, openShift(connection), CLIENT_TX_ID, seq = 1, number = "FMU-0829-001")
             val serviceId = insertService(connection)
             insertItem(connection, orderId, serviceId, position = 1, qty = "4.5", unit = "kg")
 
@@ -64,7 +64,7 @@ class SchemaHardeningTest : SchemaTestBase() {
     @Test
     fun `should refuse to delete an order that has items`() {
         PostgresSupport.withConnection { connection ->
-            val orderId = insertOrder(connection, openShift(connection), CLIENT_TX_ID, seq = 1, number = "TBT-0829-001")
+            val orderId = insertOrder(connection, openShift(connection), CLIENT_TX_ID, seq = 1, number = "FMU-0829-001")
             insertItem(connection, orderId, insertService(connection), position = 1, qty = "2.0", unit = "kg")
 
             val failure =
@@ -76,7 +76,7 @@ class SchemaHardeningTest : SchemaTestBase() {
     @Test
     fun `should record earned points at most once per order and never as zero`() {
         PostgresSupport.withConnection { connection ->
-            val orderId = insertOrder(connection, openShift(connection), CLIENT_TX_ID, seq = 1, number = "TBT-0829-001")
+            val orderId = insertOrder(connection, openShift(connection), CLIENT_TX_ID, seq = 1, number = "FMU-0829-001")
             val customerId = insertCustomer(connection)
             insertLedger(connection, customerId, orderId, type = "EARN", delta = 400)
 
@@ -98,7 +98,7 @@ class SchemaHardeningTest : SchemaTestBase() {
     fun `should keep one sale cash entry per cash order`() {
         PostgresSupport.withConnection { connection ->
             val shiftId = openShift(connection)
-            val orderId = insertOrder(connection, shiftId, CLIENT_TX_ID, seq = 1, number = "TBT-0829-001")
+            val orderId = insertOrder(connection, shiftId, CLIENT_TX_ID, seq = 1, number = "FMU-0829-001")
             insertCashEntry(connection, shiftId, kind = "SALE", orderId = orderId)
 
             val twice =
@@ -114,8 +114,8 @@ class SchemaHardeningTest : SchemaTestBase() {
     @Test
     fun `should scope idempotency keys to the device that created them`() {
         PostgresSupport.withConnection { connection ->
-            val first = insertDevice(connection, "Tablet Tebet 1")
-            val second = insertDevice(connection, "Tablet Tebet 2")
+            val first = insertDevice(connection, "Tablet Familia Urban 1")
+            val second = insertDevice(connection, "Tablet Familia Urban 2")
             insertIdempotencyKey(connection, first, IDEMPOTENCY_KEY)
             insertIdempotencyKey(connection, second, IDEMPOTENCY_KEY)
 

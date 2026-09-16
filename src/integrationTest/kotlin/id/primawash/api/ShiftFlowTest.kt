@@ -23,7 +23,7 @@ class ShiftFlowTest {
     @Test
     fun `should reconcile the drawer to the rupiah when closing`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val shift = api.openShift(siti, "Siti Nurhaliza", "1234", openingCash = 500_000)
             val id = shift.string("id")
             shift.long("countedCash") shouldBe 500_000
@@ -83,16 +83,16 @@ class ShiftFlowTest {
                 .obj("shift")
                 .getValue("open")
                 .toString() shouldBe "false"
-            ApiTestSupport.auditCount("Tutup shift Cabang Tebet · kas cocok") shouldBe 1
+            ApiTestSupport.auditCount("Tutup shift Cabang Familia Urban · kas cocok") shouldBe 1
             ApiTestSupport.auditCount("Kas keluar Rp1.180.000 — beli deterjen") shouldBe 1
             ApiTestSupport.auditCount("Kas masuk Rp62.000 — kembalian titipan") shouldBe 1
-            ApiTestSupport.auditCount("Buka shift Cabang Tebet · modal awal Rp500.000") shouldBe 1
+            ApiTestSupport.auditCount("Buka shift Cabang Familia Urban · modal awal Rp500.000") shouldBe 1
 
             // Closed means closed: no second close, no more cash, no more counting, no more online orders.
             api
                 .post("/shifts/$id/close", """{"countedCash":1624000}""", siti.token, idempotencyKey = Tx.key())
                 .shouldFailWith(HttpStatusCode.Conflict, "SHIFT_CLOSED")
-                .string("message") shouldBe "Shift Cabang Tebet sudah ditutup."
+                .string("message") shouldBe "Shift Cabang Familia Urban sudah ditutup."
             api
                 .post(
                     "/shifts/$id/cash-entries",
@@ -100,7 +100,7 @@ class ShiftFlowTest {
                     siti.token,
                     idempotencyKey = Tx.key(),
                 ).shouldFailWith(HttpStatusCode.UnprocessableEntity, "SHIFT_NOT_OPEN")
-                .string("message") shouldBe "Shift Cabang Tebet belum dibuka."
+                .string("message") shouldBe "Shift Cabang Familia Urban belum dibuka."
             api
                 .put("/shifts/$id/counted-cash", """{"countedCash":1}""", siti.token)
                 .shouldFailWith(HttpStatusCode.Conflict, "SHIFT_CLOSED")
@@ -109,7 +109,7 @@ class ShiftFlowTest {
     @Test
     fun `should report a short drawer as a difference`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val id = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             api.walkIn(siti, Line(Tx.serviceId("Cuci Setrika"), "2", 10_000))
 
@@ -121,13 +121,13 @@ class ShiftFlowTest {
 
             recap.long("expected") shouldBe 520_000
             recap.long("diff") shouldBe -8_000
-            ApiTestSupport.auditCount("Tutup shift Cabang Tebet · selisih Rp8.000") shouldBe 1
+            ApiTestSupport.auditCount("Tutup shift Cabang Familia Urban · selisih Rp8.000") shouldBe 1
         }
 
     @Test
     fun `should check branch, open shift, opening cash and proof in that order`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val proof = api.staffProof(siti, "Siti Nurhaliza", "1234")
 
             api
@@ -148,7 +148,8 @@ class ShiftFlowTest {
             api
                 .openWith(siti, """{"openingCash":500000,"staffProof":"$again"}""")
                 .shouldFailWith(HttpStatusCode.Conflict, "SHIFT_ALREADY_OPEN")
-                .string("message") shouldBe "Shift Cabang Tebet masih terbuka — tutup dulu sebelum membuka yang baru."
+                .string("message") shouldBe
+                "Shift Cabang Familia Urban masih terbuka — tutup dulu sebelum membuka yang baru."
             ApiTestSupport.count("SELECT count(*) FROM shifts") shouldBe 1
 
             // A proof is spent once: after closing, the used proof cannot open the next shift.
@@ -160,7 +161,7 @@ class ShiftFlowTest {
                 .string("message") shouldBe "Verifikasi PIN sudah kedaluwarsa — pilih staff dan masukkan PIN lagi."
 
             // A proof from another tablet is not valid here.
-            val otherTablet = api.till("TBT", "5678")
+            val otherTablet = api.till("FMU", "5678")
             val foreign = api.staffProof(otherTablet, "Bagas Ardhana", "5678")
             api
                 .openWith(siti, """{"openingCash":500000,"staffProof":"$foreign"}""")
@@ -186,7 +187,7 @@ class ShiftFlowTest {
     @Test
     fun `should hand the tablet to the staff member who opens the shift`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val proof = api.staffProof(siti, "Bagas Ardhana", "5678")
 
             val response = api.openWith(siti, """{"openingCash":400000,"staffProof":"$proof"}""")
@@ -202,7 +203,7 @@ class ShiftFlowTest {
                 .string("name") shouldBe "Bagas Ardhana"
             // Siti's session on this tablet ended with the handover.
             api.get("/me", siti.token).status shouldBe HttpStatusCode.Unauthorized
-            ApiTestSupport.auditCount("Buka shift Cabang Tebet · modal awal Rp400.000") shouldBe 1
+            ApiTestSupport.auditCount("Buka shift Cabang Familia Urban · modal awal Rp400.000") shouldBe 1
             scalar("SELECT staff_id FROM cash_entries WHERE kind = 'OPENING'") shouldBe
                 ApiTestSupport.staffId("Bagas Ardhana").toString()
         }
@@ -210,7 +211,7 @@ class ShiftFlowTest {
     @Test
     fun `should replay a retried close without closing twice`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val id = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
             val key = Tx.key()
 
@@ -226,24 +227,24 @@ class ShiftFlowTest {
     @Test
     fun `should keep a cashier to the shifts of their own branch`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
-            val nia = api.till("BTR", "2468")
+            val siti = api.till("FMU", "1234")
+            val nia = api.till("NRG", "2468")
             api.openShift(siti, "Siti Nurhaliza", "1234")
-            val bintaro = api.openShift(nia, "Nia Ramadhani", "2468").string("id")
-            val bintaroId = ApiTestSupport.branchId("BTR")
+            val narogong = api.openShift(nia, "Nia Ramadhani", "2468").string("id")
+            val narogongId = ApiTestSupport.branchId("NRG")
 
             api
-                .get("/shifts/current?branchId=$bintaroId", siti.token)
+                .get("/shifts/current?branchId=$narogongId", siti.token)
                 .shouldFailWith(HttpStatusCode.Forbidden, "BRANCH_SCOPE")
             api
                 .post(
-                    "/shifts/$bintaro/cash-entries",
+                    "/shifts/$narogong/cash-entries",
                     """{"direction":"OUT","label":"x","amount":1000}""",
                     siti.token,
                     idempotencyKey = Tx.key(),
                 ).shouldFailWith(HttpStatusCode.Forbidden, "BRANCH_SCOPE")
             api
-                .post("/shifts/$bintaro/close", """{"countedCash":0}""", siti.token, idempotencyKey = Tx.key())
+                .post("/shifts/$narogong/close", """{"countedCash":0}""", siti.token, idempotencyKey = Tx.key())
                 .shouldFailWith(HttpStatusCode.Forbidden, "BRANCH_SCOPE")
             api.get("/shifts", siti.token).status shouldBe HttpStatusCode.Forbidden
 
@@ -260,19 +261,19 @@ class ShiftFlowTest {
                 .array("items")
                 .size shouldBe 2
             api
-                .get("/shifts/current?branchId=$bintaroId", owner)
+                .get("/shifts/current?branchId=$narogongId", owner)
                 .json()
                 .obj("shift")
-                .string("id") shouldBe bintaro
-            val history = api.get("/shifts?branchId=$bintaroId&from=2026-09-15&to=2026-09-15", owner).json()
-            history.array("items").objects().map { it.string("id") } shouldContainExactly listOf(bintaro)
+                .string("id") shouldBe narogong
+            val history = api.get("/shifts?branchId=$narogongId&from=2026-09-15&to=2026-09-15", owner).json()
+            history.array("items").objects().map { it.string("id") } shouldContainExactly listOf(narogong)
             api.get("/shifts?limit=1", owner).json().isNull("nextCursor") shouldBe false
         }
 
     @Test
     fun `should validate the cash entry in the documented order`() =
         apiTest(clock) { api ->
-            val siti = api.till("TBT", "1234")
+            val siti = api.till("FMU", "1234")
             val id = api.openShift(siti, "Siti Nurhaliza", "1234").string("id")
 
             suspend fun entry(body: String) =
