@@ -22,6 +22,8 @@ import id.primawash.api.order.OrderRepository
 import id.primawash.api.order.OrderService
 import id.primawash.api.order.OrderSyncService
 import id.primawash.api.order.SaleRecorder
+import id.primawash.api.report.ReportRepository
+import id.primawash.api.report.ReportService
 import id.primawash.api.shift.ShiftRepository
 import id.primawash.api.shift.ShiftService
 import id.primawash.api.staff.StaffRepository
@@ -91,6 +93,7 @@ private fun featureModule(): Module =
         single { OrderRepository() }
         single { WaRepository() }
         single { SyncRepository() }
+        single { ReportRepository() }
 
         single { BranchService(get(), get(), get()) }
         single { SessionService(get(), get()) }
@@ -105,4 +108,5 @@ private fun featureModule(): Module =
         single { OrderService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { OrderSyncService(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
         single { SyncService(get(), get(), get(), get(), get(), get(), get(), get()) }
+        single { ReportService(get(), get(), get(), get()) }
     }

@@ -20,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 /**
  * Every endpoint needs a contract test against `openapi.yaml` (CLAUDE.md). One walk through the whole
@@ -416,6 +417,19 @@ class ApiContractTest {
                 cipeteTablet.token,
                 idempotencyKey = Tx.key(),
             ).conformsTo("POST", "/api/v1/shifts", HttpStatusCode.Created)
+
+        // ---- Owner report page (M3) -------------------------------------------------------
+        api.get("/reports/dashboard", owner).conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.OK)
+        api
+            .get("/reports/dashboard?branchId=$tebet&periodDays=7&auditRangeDays=7", owner)
+            .conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.OK)
+        api.get("/reports/dashboard", siti).conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.Forbidden)
+        api
+            .get("/reports/dashboard?periodDays=0", owner)
+            .conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.BadRequest)
+        api
+            .get("/reports/dashboard?branchId=${UUID.randomUUID()}", owner)
+            .conformsTo("GET", "/api/v1/reports/dashboard", HttpStatusCode.NotFound)
 
         val cursor =
             api
